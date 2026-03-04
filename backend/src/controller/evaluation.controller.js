@@ -16,6 +16,7 @@ import Department from '../model/department.model.js';
 import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
+import { calculateLecturerAverages } from '../utils/evaluationUtils.js';
 
 // GET /api/evaluations/:evaluationId/results
 export const getEvaluationResults = async (req, res) => {
@@ -73,25 +74,12 @@ export const getEvaluationResults = async (req, res) => {
         if (!groupedData[key].lecturer_evaluations[lecId]) {
           groupedData[key].lecturer_evaluations[lecId] = {
             lecturer_id: lecId,
-            question_totals: {},
-            comments: [],
+            evaluations: [], // Store evaluations for later calculation
           };
         }
 
-        const lecData = groupedData[key].lecturer_evaluations[lecId];
-
-        if (lecEval.comment) {
-          lecData.comments.push(lecEval.comment);
-        }
-
-        lecEval.EvaluationResponses?.forEach((response) => {
-          const qId = response.question_id;
-          if (!lecData.question_totals[qId]) {
-            lecData.question_totals[qId] = { sum: 0, count: 0 };
-          }
-          lecData.question_totals[qId].sum += parseFloat(response.rating);
-          lecData.question_totals[qId].count++;
-        });
+        // Collect evaluations for this lecturer
+        groupedData[key].lecturer_evaluations[lecId].evaluations.push(lecEval);
       });
     });
 
@@ -175,23 +163,15 @@ export const getEvaluationResults = async (req, res) => {
       }
     }
 
-    // Calculate averages and add lecturer names
+    // Calculate averages and add lecturer names using utility function
     Object.values(groupedData).forEach((group) => {
       Object.entries(group.lecturer_evaluations).forEach(([lecId, lecData]) => {
-        lecData.question_averages = {};
-        let totalAvg = 0;
-        let questionCount = 0;
+        // Use utility function to calculate averages
+        const calculatedData = calculateLecturerAverages(lecData.evaluations);
 
-        Object.entries(lecData.question_totals).forEach(([qId, data]) => {
-          const avg = data.count > 0 ? (data.sum / data.count).toFixed(1) : 0;
-          lecData.question_averages[qId] = parseFloat(avg);
-          totalAvg += parseFloat(avg);
-          questionCount++;
-        });
-
-        // Overall average across all questions for this lecturer
-        lecData.overall_average =
-          questionCount > 0 ? parseFloat((totalAvg / questionCount).toFixed(1)) : 0;
+        lecData.question_averages = calculatedData.questionAverages;
+        lecData.overall_average = calculatedData.overallAverage;
+        lecData.comments = calculatedData.comments;
 
         // Add lecturer name and title
         if (lecturerMap[lecId]) {
@@ -199,8 +179,8 @@ export const getEvaluationResults = async (req, res) => {
           lecData.lecturer_title = lecturerMap[lecId].title;
         }
 
-        // Remove the raw totals (keep only averages)
-        delete lecData.question_totals;
+        // Remove the temporary evaluations array
+        delete lecData.evaluations;
       });
     });
 
@@ -587,7 +567,7 @@ export const getLecturerEvaluationPDF = async (req, res) => {
               include: [
                 {
                   model: Department,
-                  attributes: ['id', 'dept_name'],
+                  attributes: ['id', 'dept_name', 'dept_name_khmer'],
                 },
               ],
             },
@@ -601,32 +581,24 @@ export const getLecturerEvaluationPDF = async (req, res) => {
     });
 
     // Process data for this lecturer
-    const questionTotals = {};
-    const allComments = [];
-    let totalResponseCount = 0;
     let totalStudents = 0;
 
+    // Collect all lecturer evaluations for this lecturer
+    const lecturerEvaluations = [];
     evaluation.EvaluationSubmissions?.forEach((submission) => {
-      if (!submission.LecturerEvaluations || submission.LecturerEvaluations.length === 0) {
-        return; // Skip if no evaluation for this lecturer
+      if (submission.LecturerEvaluations && submission.LecturerEvaluations.length > 0) {
+        lecturerEvaluations.push(submission.LecturerEvaluations[0]);
       }
-
-      const lecEval = submission.LecturerEvaluations[0];
-      totalResponseCount++;
-
-      if (lecEval.comment && lecEval.comment.trim()) {
-        allComments.push(lecEval.comment.trim());
-      }
-
-      lecEval.EvaluationResponses?.forEach((response) => {
-        const qId = response.question_id;
-        if (!questionTotals[qId]) {
-          questionTotals[qId] = { sum: 0, count: 0 };
-        }
-        questionTotals[qId].sum += parseFloat(response.rating);
-        questionTotals[qId].count++;
-      });
     });
+
+    // Use utility function to calculate averages
+    const calculatedData = calculateLecturerAverages(lecturerEvaluations);
+    const {
+      questionAverages,
+      overallAverage,
+      comments: allComments,
+      responseCount: totalResponseCount,
+    } = calculatedData;
 
     // Get total students from groups
     if (courseMapping?.Class) {
@@ -637,19 +609,11 @@ export const getLecturerEvaluationPDF = async (req, res) => {
       totalStudents = groups.reduce((sum, g) => sum + (g.num_of_student || 0), 0);
     }
 
-    // Calculate question averages
-    const questionAverages = {};
-    let overallSum = 0;
-    let questionCount = 0;
-
-    Object.entries(questionTotals).forEach(([qId, data]) => {
-      const avg = data.count > 0 ? data.sum / data.count : 0;
-      questionAverages[qId] = avg.toFixed(1);
-      overallSum += avg;
-      questionCount++;
-    });
-
-    const overallAverage = questionCount > 0 ? (overallSum / questionCount).toFixed(1) : '0.0';
+    // Convert numeric values to strings for template
+    const questionAveragesStr = Object.fromEntries(
+      Object.entries(questionAverages).map(([key, value]) => [key, value.toFixed(1)])
+    );
+    const overallAverageStr = overallAverage.toFixed(1);
     const responsePercentage =
       totalStudents > 0 ? Math.round((totalResponseCount / totalStudents) * 100) : 100;
 
@@ -677,9 +641,10 @@ export const getLecturerEvaluationPDF = async (req, res) => {
     const lecturerTitle = lecturer.title ? escapeHtml(lecturer.title) + '.' : '';
     const lecturerFullName = escapeHtml(lecturer.full_name_english || 'N/A');
     const courseName = escapeHtml(courseMapping?.Course?.course_name || 'N/A');
-    const className = escapeHtml(courseMapping?.Class?.name || '10');
-    const yearLevel = escapeHtml(courseMapping?.Class?.year_level || 'Year 2');
-    const term = escapeHtml(courseMapping?.Class?.term || 'Term 2');
+    const className = escapeHtml(courseMapping?.Class?.name || 'N/A');
+    const yearLevel = escapeHtml(courseMapping?.Class?.year_level || 'N/A');
+    const term = escapeHtml(courseMapping?.Class?.term || 'N/A');
+    const deptNameKhmer = escapeHtml(courseMapping?.Class?.Specialization?.Department?.dept_name_khmer || 'N/A');
 
     // Replace all placeholders
     html = html.replace(/{lecturer_title}/g, lecturerTitle);
@@ -688,6 +653,7 @@ export const getLecturerEvaluationPDF = async (req, res) => {
     html = html.replace(/{class_name}/g, className);
     html = html.replace(/{year_level}/g, yearLevel);
     html = html.replace(/{term}/g, term);
+    html = html.replace(/{dept_name_khmer}/g, deptNameKhmer);
     html = html.replace(/{responses_received}/g, totalResponseCount.toString());
     html = html.replace(/{total_students}/g, totalStudents.toString());
     html = html.replace(/{response_percentage}/g, responsePercentage.toString());
@@ -696,7 +662,7 @@ export const getLecturerEvaluationPDF = async (req, res) => {
     let evaluationTableRows = '';
     questions.forEach((question) => {
       const qId = question.id;
-      const rating = questionAverages[qId] || '0.0';
+      const rating = questionAveragesStr[qId] || '0.0';
       const questionText = escapeHtml(question.question_text);
       const questionNumber = question.order_no;
 
@@ -709,7 +675,7 @@ export const getLecturerEvaluationPDF = async (req, res) => {
     // Add average row
     evaluationTableRows += `      <tr class="avg-row">
         <td class="avg-label"><strong>Average of Q1 to Q${questions.length}</strong></td>
-        <td class="score avg-score">${overallAverage}</td>
+        <td class="score avg-score">${overallAverageStr}</td>
       </tr>`;
 
     // Replace the evaluation table rows placeholder

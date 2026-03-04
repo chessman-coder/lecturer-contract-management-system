@@ -23,9 +23,6 @@ import ContractItem from './contractItem.model.js';
 import AdvisorResponsibility from './advisorResponsibility.model.js';
 import Schedule from './schedule.model.js';
 import ScheduleEntry from './scheduleEntry.model.js';
-
-import HourRating from './hourRating.model.js';
-import RateHistory from './rateHistory.model.js';
 import { TimeSlot } from './timeSlot.model.js';
 import Group from './group.model.js';
 import Specialization from './specialization.model.js';
@@ -35,7 +32,6 @@ import LecturerEvaluation from './evaluation/lecturerEvaluation.model.js';
 import EvaluationResponse from './evaluation/evaluationResponse.model.js';
 import EvaluationQuestion from './evaluation/evaluationQuestion.model.js';
 import EvaluationLecturer from './evaluation/evaluationLecturer.model.js';
-
 import Notification from './notification.js';
 
 // Set up associations
@@ -65,6 +61,18 @@ User.hasOne(LecturerProfile, {
 LecturerProfile.belongsTo(User, {
   foreignKey: 'user_id',
   onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+// Candidate - LecturerProfile (One-to-One)
+LecturerProfile.belongsTo(Candidate, {
+  foreignKey: 'candidate_id',
+  onDelete: 'SET NULL',
+  onUpdate: 'CASCADE',
+});
+Candidate.hasOne(LecturerProfile, {
+  foreignKey: 'candidate_id',
+  onDelete: 'SET NULL',
   onUpdate: 'CASCADE',
 });
 
@@ -340,39 +348,6 @@ EvaluationResponse.belongsTo(EvaluationQuestion, {
 EvaluationQuestion.hasMany(EvaluationResponse, {
   foreignKey: 'question_id',
 });
-// Hour Rating relationships
-HourRating.belongsTo(LecturerProfile, {
-  foreignKey: 'lecturer_profile_id',
-  as: 'lecturer',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
-});
-LecturerProfile.hasOne(HourRating, { foreignKey: 'lecturer_profile_id', as: 'hourRating' });
-
-HourRating.belongsTo(User, {
-  foreignKey: 'rate_change_approved_by',
-  as: 'approver',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE',
-});
-User.hasMany(HourRating, { foreignKey: 'rate_change_approved_by', as: 'approvedRateChanges' });
-
-// Rate History relationships
-RateHistory.belongsTo(LecturerProfile, {
-  foreignKey: 'lecturer_profile_id',
-  as: 'lecturer',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
-});
-LecturerProfile.hasMany(RateHistory, { foreignKey: 'lecturer_profile_id', as: 'rateHistory' });
-
-RateHistory.belongsTo(User, {
-  foreignKey: 'approved_by',
-  as: 'approver',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE',
-});
-User.hasMany(RateHistory, { foreignKey: 'approved_by', as: 'approvedRates' });
 
 // Contract items (used by teaching contracts and simple contracts)
 TeachingContract.hasMany(ContractItem, { foreignKey: 'contract_id', as: 'contractItems' });
@@ -467,8 +442,6 @@ export {
   EvaluationResponse,
   EvaluationQuestion,
   EvaluationLecturer,
-  HourRating,
-  RateHistory,
   TimeSlot,
   Group,
   Specialization,

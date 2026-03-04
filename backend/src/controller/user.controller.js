@@ -409,6 +409,7 @@ export const createLecturerFromCandidate = async (req, res) => {
       const lecturer = await LecturerProfile.create(
         {
           user_id: user.id,
+          candidate_id: cand.id, // Link to candidate record
           employee_id: `EMP${Date.now().toString().slice(-6)}`,
           full_name_english: fullName,
           position: position,
@@ -445,8 +446,10 @@ export const createLecturerFromCandidate = async (req, res) => {
           employeeId: lecturer.employee_id,
           fullName: lecturer.full_name_english,
           position: lecturer.position,
+          candidateId: lecturer.candidate_id, // Show the linked candidate
         },
         candidateId: cand.id,
+        message: 'Lecturer created successfully from candidate',
       });
     });
   } catch (error) {
