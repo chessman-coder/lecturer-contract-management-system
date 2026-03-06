@@ -24,6 +24,7 @@
     { "name": "Schedule", "description": "Schedule containers (timetables per group)" },
     { "name": "ScheduleEntry", "description": "Schedule time slot entries" },
     { "name": "Evaluation", "description": "Lecturer evaluation management" },
+    { "name": "HourlyRates", "description": "Hourly rate management for lecturers" },
     { "name": "Users", "description": "Administrative user management" },
     { "name": "Dashboard", "description": "Dashboard stats" },
     { "name": "Profile", "description": "Authenticated user profile & password" }
@@ -3334,6 +3335,198 @@
                 "schema": {
                   "type": "object",
                   "properties": { "message": { "type": "string" } }
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        },
+        "security": [{ "cookieAuth": [], "bearerAuth": [] }]
+      }
+    },
+    "/api/hourly-rates": {
+      "get": {
+        "tags": ["HourlyRates"],
+        "summary": "Get all lecturers with hourly rates and statistics",
+        "description": "Retrieves all lecturers with their hourly rates from candidate records, along with term-by-term teaching statistics including hours taught and evaluation ratings per term.",
+        "responses": {
+          "200": {
+            "description": "Lecturers with hourly rates and term progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lecturers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "integer", "description": "Lecturer profile ID" },
+                          "title": { "type": "string", "description": "Academic title" },
+                          "gender": { "type": "string" },
+                          "full_name_english": { "type": "string" },
+                          "full_name_khmer": { "type": "string" },
+                          "hourlyRate": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Hourly rate from candidate record"
+                          },
+                          "totalTerms": {
+                            "type": "integer",
+                            "description": "Total number of unique terms taught"
+                          },
+                          "totalHours": {
+                            "type": "number",
+                            "description": "Total teaching hours across all terms"
+                          },
+                          "totalRatingSum": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Sum of all term ratings"
+                          },
+                          "avgRating": {
+                            "type": "number",
+                            "nullable": true,
+                            "description": "Average rating across all terms"
+                          },
+                          "termProgress": {
+                            "type": "array",
+                            "description": "Term-by-term breakdown",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "termKey": {
+                                  "type": "string",
+                                  "description": "Unique term identifier (academic_year-term)"
+                                },
+                                "term": { "type": "string", "description": "Term name" },
+                                "academic_year": {
+                                  "type": "string",
+                                  "description": "Academic year"
+                                },
+                                "hours": {
+                                  "type": "number",
+                                  "description": "Total hours taught in this term"
+                                },
+                                "courses": {
+                                  "type": "array",
+                                  "description": "Courses taught in this term",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "course_name": { "type": "string" },
+                                      "hours": { "type": "number" }
+                                    }
+                                  }
+                                },
+                                "rating": {
+                                  "type": "number",
+                                  "nullable": true,
+                                  "description": "Overall evaluation rating for this term"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "message": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        },
+        "security": [{ "cookieAuth": [], "bearerAuth": [] }]
+      }
+    },
+    "/api/hourly-rates/lecturer/{lecturerId}": {
+      "put": {
+        "tags": ["HourlyRates"],
+        "summary": "Update lecturer hourly rate",
+        "description": "Updates the hourly rate for a specific lecturer by modifying the linked candidate record.",
+        "parameters": [
+          {
+            "name": "lecturerId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" },
+            "description": "Lecturer profile ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["hourlyRate"],
+                "properties": {
+                  "hourlyRate": {
+                    "type": "number",
+                    "description": "New hourly rate (must be positive)",
+                    "example": 25.5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hourly rate updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "lecturer": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "integer" },
+                        "full_name_english": { "type": "string" },
+                        "candidate_id": { "type": "integer" },
+                        "hourlyRate": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error - Missing or invalid hourly rate",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "missingRate": {
+                    "value": { "message": "Hourly rate is required" }
+                  },
+                  "invalidRate": {
+                    "value": { "message": "Hourly rate must be a valid positive number" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Lecturer not found or no candidate record linked",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "examples": {
+                  "lecturerNotFound": {
+                    "value": { "message": "Lecturer not found" }
+                  },
+                  "noCandidateLinked": {
+                    "value": {
+                      "message": "No candidate record linked to this lecturer. Cannot update hourly rate."
+                    }
+                  }
                 }
               }
             }
