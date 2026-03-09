@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 
-import NotificationSocketService from "./notification.socket";
+import NotificationSocketService from "./notification.socket.js";
 
 let io;
 let notificationSocket;
