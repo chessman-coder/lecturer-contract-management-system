@@ -11,13 +11,41 @@ import ContractFilters from '../../components/admin/contractsGeneration/Contract
 import ContractCard from '../../components/admin/contractsGeneration/ContractCard';
 import ContractGenerationDialog from '../../components/admin/contractsGeneration/ContractGenerationDialog';
 import ContractDeleteDialog from '../../components/admin/contractsGeneration/ContractDeleteDialog';
+import ContractRedoEditDialog from '../../components/admin/contractsGeneration/ContractRedoEditDialog';
 import { formatContractId } from '../../utils/contractHelpers';
+import { createAdvisorContract, editAdvisorContract, getAdvisorContract, listAdvisorContracts } from '../../services/advisorContract.service';
+import { editTeachingContract } from '../../services/contract.service';
 
 export default function ContractGeneration() {
   const { authUser } = useAuthStore();
-  const [academicYear, setAcademicYear] = useState('2025-2026');
+  const ACADEMIC_YEAR_STORAGE_KEY = 'contractGeneration.academicYear';
+  const getDefaultAcademicYear = () => {
+    const year = new Date().getFullYear();
+    return `${year}-${year + 1}`;
+  };
+
+  const [academicYear, setAcademicYear] = useState(() => {
+    try {
+      const saved = window?.localStorage?.getItem(ACADEMIC_YEAR_STORAGE_KEY);
+      return saved || getDefaultAcademicYear();
+    } catch {
+      return getDefaultAcademicYear();
+    }
+  });
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState({ open: false, id: null, label: '' });
+  const [advisorContracts, setAdvisorContracts] = useState([]);
+  const [advisorTotal, setAdvisorTotal] = useState(0);
+  const [advisorLoading, setAdvisorLoading] = useState(false);
+  const [editRedo, setEditRedo] = useState({ open: false, contract: null });
+
+  useEffect(() => {
+    try {
+      window?.localStorage?.setItem(ACADEMIC_YEAR_STORAGE_KEY, academicYear);
+    } catch {
+      // ignore storage errors
+    }
+  }, [academicYear]);
 
   // Custom hooks
   const contractData = useContractData();
@@ -28,6 +56,51 @@ export default function ContractGeneration() {
     contractData.refreshContracts
   );
   const contractMenu = useContractMenu(contractData.contracts);
+
+  const normalizeAdvisorContract = (c) => {
+    const raw = c || {};
+    const status = String(raw.status || '').toUpperCase();
+    return {
+      ...raw,
+      contract_type: 'ADVISOR',
+      // Admin UX: newly created advisor contracts show as waiting advisor
+      status: status === 'DRAFT' ? 'WAITING_ADVISOR' : status,
+    };
+  };
+
+  const fetchAllAdvisorContracts = async () => {
+    try {
+      setAdvisorLoading(true);
+      const limit = 100;
+      let page = 1;
+      let all = [];
+      let total = 0;
+      // Page through because backend caps limit at 100
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const body = await listAdvisorContracts({ page, limit });
+        const rows = Array.isArray(body?.data) ? body.data : [];
+        total = Number(body?.total || 0);
+        all = all.concat(rows);
+        if (rows.length < limit) break;
+        if (total && all.length >= total) break;
+        page += 1;
+      }
+      setAdvisorContracts(all.map(normalizeAdvisorContract));
+      setAdvisorTotal(total || all.length);
+    } catch (e) {
+      console.error('Failed to fetch advisor contracts:', e);
+      setAdvisorContracts([]);
+      setAdvisorTotal(0);
+    } finally {
+      setAdvisorLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAllAdvisorContracts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Fetch mappings for different academic years in contracts
   useEffect(() => {
@@ -47,18 +120,23 @@ export default function ContractGeneration() {
     };
     const qRaw = normalize(contractData.search || '');
     const qName = stripTitle(qRaw);
-    const pool = (contractData.contracts || []);
+    const statusNeedle = String(contractData.statusFilter || '').toUpperCase();
+    const pool = [...(contractData.contracts || []), ...(advisorContracts || [])];
+
+    const byStatus = !statusNeedle
+      ? pool
+      : pool.filter(c => String(c?.status || '').toUpperCase() === statusNeedle);
     
-    if (!qName) return pool;
+    if (!qName) return byStatus;
     
-    return pool.filter(c => {
+    return byStatus.filter(c => {
       const lecturerTitle = normalize(c.lecturer?.LecturerProfile?.title || c.lecturer?.title || '');
       const lecturerNameBase = normalize(c.lecturer?.display_name || c.lecturer?.full_name || c.lecturer?.email || '');
       const fullName = `${lecturerTitle ? lecturerTitle + ' ' : ''}${lecturerNameBase}`.trim();
       const candidate = stripTitle(fullName);
       return candidate.startsWith(qName);
     });
-  }, [contractData.contracts, contractData.search, authUser]);
+  }, [contractData.contracts, advisorContracts, contractData.search, contractData.statusFilter, authUser]);
 
   const handleCreateContract = async (payload) => {
     // Helper to safely parse integers
@@ -99,6 +177,73 @@ export default function ContractGeneration() {
     };
     console.log('Sending contract payload:', contractPayload);
     await contractActions.createContract(contractPayload);
+  };
+
+  const handleCreateAdvisorContract = async (payload) => {
+    // Helper to safely parse integers
+    const parseIntSafe = (value, defaultValue = null) => {
+      if (value === null || value === undefined || value === '') return defaultValue;
+      const parsed = parseInt(value, 10);
+      return isNaN(parsed) ? defaultValue : parsed;
+    };
+
+    const parseFloatSafe = (value, defaultValue = null) => {
+      if (value === null || value === undefined || value === '') return defaultValue;
+      const parsed = parseFloat(String(value).replace(/[^0-9.-]/g, ''));
+      return isNaN(parsed) ? defaultValue : parsed;
+    };
+
+    const advisorPayload = {
+      lecturer_user_id: parseIntSafe(payload.lecturerId),
+      academic_year: academicYear,
+      role: payload.role,
+      hourly_rate: parseFloatSafe(payload.hourlyRate),
+      capstone_1: !!payload.capstone_1,
+      capstone_2: !!payload.capstone_2,
+      internship_1: !!payload.internship_1,
+      internship_2: !!payload.internship_2,
+      hours_per_student: parseIntSafe(payload.hours_per_student),
+      students: Array.isArray(payload.students) ? payload.students : [],
+      start_date: payload.start_date,
+      end_date: payload.end_date,
+      duties: Array.isArray(payload.duties) ? payload.duties : [],
+      join_judging_hours: payload.join_judging_hours === '' ? null : parseIntSafe(payload.join_judging_hours),
+    };
+
+    const created = await createAdvisorContract(advisorPayload);
+
+    // Immediately add the newly created advisor contract to the grid
+    try {
+      const newId = created?.id;
+      if (newId) {
+        const fresh = await getAdvisorContract(newId);
+        const normalized = normalizeAdvisorContract(fresh);
+        setAdvisorContracts(prev => [normalized, ...(prev || []).filter(x => x?.id !== normalized.id)]);
+        setAdvisorTotal(t => (Number.isFinite(t) ? t + 1 : t));
+      } else {
+        await fetchAllAdvisorContracts();
+      }
+    } catch {
+      await fetchAllAdvisorContracts();
+    }
+  };
+
+  const handleOpenRedoEdit = (contract) => {
+    const st = String(contract?.status || '').toUpperCase();
+    if (st !== 'REQUEST_REDO') return;
+    setEditRedo({ open: true, contract });
+  };
+
+  const handleSaveRedoEdit = async (contract, payload) => {
+    if (!contract?.id) return;
+    const type = String(contract?.contract_type || '').toUpperCase();
+    if (type === 'ADVISOR') {
+      await editAdvisorContract(contract.id, payload);
+      await fetchAllAdvisorContracts();
+    } else {
+      await editTeachingContract(contract.id, payload);
+      await contractData.refreshContracts();
+    }
   };
 
   const openDeleteConfirm = (id) => {
@@ -143,7 +288,22 @@ export default function ContractGeneration() {
         lecturers={contractMappings.lecturers}
         mappings={contractMappings.mappings}
         mappingUserId={contractMappings.mappingUserId}
+        resolveLecturerUserId={contractMappings.resolveLecturerUserId}
         onCreate={handleCreateContract}
+        onCreateAdvisor={handleCreateAdvisorContract}
+      />
+
+      {/* Redo edit dialog (REQUEST_REDO) */}
+      <ContractRedoEditDialog
+        open={editRedo.open}
+        onOpenChange={(v) => setEditRedo(prev => ({ ...prev, open: v }))}
+        contract={editRedo.contract}
+        onSave={handleSaveRedoEdit}
+        currentAcademicYear={academicYear}
+        mappings={contractMappings.mappings}
+        mappingsByYear={contractMappings.mappingsByYear}
+        fetchMappingsForYear={contractMappings.fetchMappingsForYear}
+        mappingUserId={contractMappings.mappingUserId}
       />
 
       {/* Search & filter bar */}
@@ -159,10 +319,10 @@ export default function ContractGeneration() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <FileText className="w-5 h-5 text-blue-600"/>
-            <h2 className="text-lg font-semibold">Contracts ({contractData.total})</h2>
+            <h2 className="text-lg font-semibold">Contracts ({contractData.total + advisorTotal})</h2>
           </div>
           <div className="text-sm text-gray-600">
-            {(contractData.contracts?.length || 0)} of {contractData.total} shown
+            {((contractData.contracts?.length || 0) + (advisorContracts?.length || 0))} of {(contractData.total + advisorTotal)} shown
           </div>
         </div>
 
@@ -195,13 +355,12 @@ export default function ContractGeneration() {
           {/* Contract Cards */}
           {(filteredContracts || []).map(contract => (
             <ContractCard
-              key={contract.id}
+              key={`${contract.contract_type || 'TEACHING'}-${contract.id}`}
               contract={contract}
-              mappingsByYear={contractMappings.mappingsByYear}
               ratesByLecturer={contractActions.ratesByLecturer}
-              onMenuOpen={contractMenu.openMenu}
               onPreview={contractActions.previewPdf}
               onDownload={contractActions.downloadPdf}
+              onEdit={handleOpenRedoEdit}
             />
           ))}
 
@@ -213,11 +372,6 @@ export default function ContractGeneration() {
               <p className="text-gray-500 mb-4">
                 {contractData.search ? 'Try adjusting your search criteria' : 'Get started by generating your first contract'}
               </p>
-              {!contractData.search && (
-                <Button onClick={() => setShowGenerateDialog(true)} className="inline-flex items-center gap-2">
-                  <Plus className="w-4 h-4" /> Generate Contract
-                </Button>
-              )}
             </div>
           )}
         </div>

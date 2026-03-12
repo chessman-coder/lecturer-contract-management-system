@@ -3,7 +3,9 @@ import {
   createContract as createTeachingContract, 
   deleteContract as deleteTeachingContract, 
   getContractPdfBlob, 
-  getContractPdfUrl 
+  getContractPdfUrl,
+  getAdvisorContractPdfBlob,
+  getAdvisorContractPdfUrl
 } from '../../../services/contract.service';
 import { getLecturerDetail } from '../../../services/lecturer.service';
 import { lecturerFilename } from '../../../utils/contractHelpers';
@@ -62,9 +64,13 @@ export function useContractActions(contracts, setContracts, refreshContracts) {
     }
   };
 
-  const previewPdf = (id) => {
+  const previewPdf = (input) => {
+    if (!input) return;
+    const c = (typeof input === 'object' && input) ? input : (contracts || []).find(x => x.id === input);
+    const id = (typeof input === 'object' && input) ? input.id : input;
     if (!id) return;
-    const url = getContractPdfUrl(id);
+    const type = String(c?.contract_type || '').toUpperCase();
+    const url = type === 'ADVISOR' ? getAdvisorContractPdfUrl(id) : getContractPdfUrl(id);
     window.open(url, '_blank');
   };
 
@@ -76,7 +82,8 @@ export function useContractActions(contracts, setContracts, refreshContracts) {
     let filename = (c && c.lecturer) ? lecturerFilename(c.lecturer) : null;
     if (!filename) filename = `contract-${id}.pdf`;
     try {
-      const data = await getContractPdfBlob(id);
+      const type = String(c?.contract_type || '').toUpperCase();
+      const data = type === 'ADVISOR' ? await getAdvisorContractPdfBlob(id) : await getContractPdfBlob(id);
       const blob = new Blob([data], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

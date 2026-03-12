@@ -24,13 +24,15 @@ export default function PendingContractsCard({
   }
 
   const contract = pendingContracts[0];
+  const isAdvisor = String(contract?.contract_type || '').toUpperCase() === 'ADVISOR';
   const formattedId = formatContractId(contract);
   const hours = calculateTotalHours(contract);
   const startDate = contract.start_date || contract.startDate || null;
   const endDate = contract.end_date || contract.endDate || null;
   const period = startDate && endDate 
     ? `${formatMDY(startDate)} - ${formatMDY(endDate)}` 
-    : `Term ${contract.term} • ${contract.academic_year}`;
+    : (contract.term ? `Term ${contract.term} • ${contract.academic_year}` : `Academic Year ${contract.academic_year}`);
+  const rateForContract = isAdvisor ? (Number(contract?.hourly_rate) || null) : hourlyRate;
   const dept = getLecturerDepartment(contract);
 
   return (
@@ -66,12 +68,12 @@ export default function PendingContractsCard({
               </div>
               <div>
                 <span className="text-gray-600">Rate:</span>{' '}
-                {hourlyRate != null ? `$${hourlyRate}/hr` : '—'}
+                {rateForContract != null ? `$${rateForContract}/hr` : '—'}
               </div>
               <div className="sm:col-span-2">
                 <span className="text-gray-600">Total:</span>{' '}
-                {hourlyRate != null 
-                  ? `$${Math.round(hourlyRate * hours).toLocaleString()}` 
+                {rateForContract != null 
+                  ? `$${Math.round(rateForContract * hours).toLocaleString()}` 
                   : '—'}
               </div>
             </div>
@@ -82,7 +84,7 @@ export default function PendingContractsCard({
             <Button 
               size="sm" 
               variant="outline" 
-              onClick={() => onPreview(contract.id)} 
+              onClick={() => onPreview(contract.id, contract)} 
               title="Preview contract" 
               className="border-amber-200"
             >

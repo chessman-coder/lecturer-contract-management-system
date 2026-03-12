@@ -134,7 +134,9 @@ export const lecturerFilename = (lecturer) => {
 
 export const formatContractId = (contract) => {
   const createdYear = contract.created_at ? new Date(contract.created_at).getFullYear() : new Date().getFullYear();
-  return `CTR-${createdYear}-${String(contract.id).padStart(3, '0')}`;
+  const t = String(contract?.contract_type || '').toUpperCase();
+  const prefix = t === 'ADVISOR' ? 'AC' : 'LC';
+  return `${prefix}-${createdYear}-${String(contract.id).padStart(3, '0')}`;
 };
 
 export const getLecturerName = (lecturer) => {

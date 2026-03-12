@@ -137,7 +137,7 @@ export const toSafePdfFilename = (baseName, id) => {
  */
 export const formatContractId = (contract) => {
   const createdYear = contract.created_at ? new Date(contract.created_at).getFullYear() : new Date().getFullYear();
-  return `CTR-${createdYear}-${String(contract.id).padStart(3, '0')}`;
+  return `LC-${createdYear}-${String(contract.id).padStart(3, '0')}`;
 };
 
 /**

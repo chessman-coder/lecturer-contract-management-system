@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { listContracts } from '../../../services/contract.service';
+import { listAdvisorContracts } from '../../../services/advisorContract.service';
 import { getMyLecturerProfile } from '../../../services/lecturerProfile.service';
 import { getDisplayStatus } from '../../../utils/lecturerContractHelpers';
 
@@ -22,13 +23,18 @@ export const useContractData = () => {
   const fetchContracts = async () => {
     try {
       setLoading(true);
-      const res = await listContracts({ 
-        page, 
-        limit, 
-        q: q || undefined 
-      });
-      setContracts(res?.data || []);
-      setTotal(res?.total || 0);
+      const [teachingRes, advisorRes] = await Promise.all([
+        listContracts({ page, limit, q: q || undefined }),
+        // Advisor contracts endpoint supports lecturer scope; keep it unfiltered for now.
+        listAdvisorContracts({ page: 1, limit: 1000 }),
+      ]);
+
+      const teaching = (teachingRes?.data || []).map((c) => ({ ...c, contract_type: 'TEACHING' }));
+      const advisor = (advisorRes?.data || []).map((c) => ({ ...c, contract_type: 'ADVISOR' }));
+      const merged = [...teaching, ...advisor];
+
+      setContracts(merged);
+      setTotal(merged.length);
     } catch (e) {
       // Silent fail
     } finally {
@@ -67,11 +73,17 @@ export const useContractData = () => {
 
   // Pending contracts (requiring lecturer signature)
   const pendingContracts = useMemo(() => 
-    (contracts || []).filter(c => 
-      c.status === 'WAITING_LECTURER' || 
-      c.status === 'MANAGEMENT_SIGNED' || 
-      c.status === 'DRAFT'
-    ), 
+    (contracts || []).filter(c => {
+      const t = String(c?.contract_type || '').toUpperCase();
+      if (t === 'ADVISOR') {
+        return String(c?.status || '').toUpperCase() === 'DRAFT' && !c?.advisor_signed_at;
+      }
+      return (
+        c.status === 'WAITING_LECTURER' ||
+        c.status === 'MANAGEMENT_SIGNED' ||
+        c.status === 'DRAFT'
+      );
+    }),
     [contracts]
   );
 
@@ -83,6 +95,7 @@ export const useContractData = () => {
     return list.filter(c => {
       const ds = getDisplayStatus(c);
       return (
+        (statusFilter === 'WAITING_ADVISOR' && ds === 'WAITING_ADVISOR') ||
         (statusFilter === 'WAITING_LECTURER' && ds === 'WAITING_LECTURER') ||
         (statusFilter === 'WAITING_MANAGEMENT' && ds === 'WAITING_MANAGEMENT') ||
         (statusFilter === 'COMPLETED' && ds === 'COMPLETED') ||
