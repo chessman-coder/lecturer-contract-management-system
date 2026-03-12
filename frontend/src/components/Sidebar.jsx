@@ -109,6 +109,13 @@ const navItems = [
   },
   {
     title: "Profile Settings",
+    href: "/superadmin/profile",
+    icon: Settings,
+    roles: ["superadmin"],
+    category: null
+  },
+  {
+    title: "Profile Settings",
     href: "/admin/profile",
     icon: Settings,
     roles: ["admin"],
@@ -249,11 +256,11 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
               e.stopPropagation?.();
               if (collapsed) {
                 // When collapsed, expand sidebar and open this submenu so child icons are visible
-                try { localStorage.setItem('sidebarCollapsed', 'false'); } catch {}
+                try { localStorage.setItem('sidebarCollapsed', 'false'); } catch { /* ignore */ }
                 setCollapsed(false);
                 setExpandedItems(prev => {
                   const next = { ...prev, [item.title]: true };
-                  try { localStorage.setItem('expandedItems', JSON.stringify(next)); } catch {}
+                  try { localStorage.setItem('expandedItems', JSON.stringify(next)); } catch { /* ignore */ }
                   return next;
                 });
                 return;

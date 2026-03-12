@@ -29,11 +29,12 @@ const ManagementContracts = lazy(() => import('./pages/management/ManagementCont
 
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard.jsx'));
 const UserManagement = lazy(() => import('./pages/UserManagement.jsx'));
+const SuperAdminProfile = lazy(() => import('./pages/superadmin/SuperAdminProfile.jsx'));
 const LoginForm = lazy(() => import('./components/LoginForm.jsx'));
 
 
 function App() {
-  const { authUser, checkAuth, isCheckingAuth } = useAuthStore();
+  const { authUser, checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
@@ -65,6 +66,15 @@ function App() {
           element={
             <RequireRole allowed={["superadmin"]}>
               <UserManagement />
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="/superadmin/profile"
+          element={
+            <RequireRole allowed={["superadmin"]}>
+              <SuperAdminProfile />
             </RequireRole>
           }
         />
