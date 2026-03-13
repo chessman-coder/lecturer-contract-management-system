@@ -10,6 +10,11 @@ export async function createContract(payload) {
   return res.data;
 }
 
+export async function editTeachingContract(id, payload) {
+  const res = await axiosInstance.patch(`/teaching-contracts/${id}`, payload);
+  return res.data;
+}
+
 export async function deleteContract(id) {
   await axiosInstance.delete(`/teaching-contracts/${id}`);
 }
@@ -21,6 +26,15 @@ export async function getContractPdfBlob(id) {
 
 export function getContractPdfUrl(id) {
   return `${axiosInstance.defaults.baseURL}/teaching-contracts/${id}/pdf`;
+}
+
+export async function getAdvisorContractPdfBlob(id) {
+  const res = await axiosInstance.get(`/advisor-contracts/${id}/pdf`, { responseType: 'blob' });
+  return res.data;
+}
+
+export function getAdvisorContractPdfUrl(id) {
+  return `${axiosInstance.defaults.baseURL}/advisor-contracts/${id}/pdf`;
 }
 
 export async function uploadContractSignature(id, file, who = 'lecturer') {

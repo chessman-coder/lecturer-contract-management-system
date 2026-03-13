@@ -18,9 +18,11 @@ import { CandidateQuestion } from './candidateQuestion.model.js';
 import University from './university.model.js';
 import TeachingContract from './teachingContract.model.js';
 import TeachingContractCourse from './teachingContractCourse.model.js';
+import ContractRedoRequest from './contractRedoRequest.model.js';
 import NewContract from './newContract.model.js';
 import ContractItem from './contractItem.model.js';
 import AdvisorResponsibility from './advisorResponsibility.model.js';
+import AdvisorContract from './advisorContract.model.js';
 import Schedule from './schedule.model.js';
 import ScheduleEntry from './scheduleEntry.model.js';
 import { TimeSlot } from './timeSlot.model.js';
@@ -296,6 +298,23 @@ TeachingContractCourse.belongsTo(ClassModel, {
 });
 ClassModel.hasMany(TeachingContractCourse, { foreignKey: 'class_id' });
 
+// Redo request tracking (messages to admin)
+ContractRedoRequest.belongsTo(TeachingContract, {
+  foreignKey: 'contract_id',
+  as: 'contract',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+TeachingContract.hasMany(ContractRedoRequest, { foreignKey: 'contract_id', as: 'redoRequests' });
+
+ContractRedoRequest.belongsTo(User, {
+  foreignKey: 'requester_user_id',
+  as: 'requester',
+  onDelete: 'RESTRICT',
+  onUpdate: 'CASCADE',
+});
+User.hasMany(ContractRedoRequest, { foreignKey: 'requester_user_id', as: 'contractRedoRequests' });
+
 // Advisor responsibility relationships
 AdvisorResponsibility.belongsTo(TeachingContract, {
   foreignKey: 'contract_id',
@@ -307,6 +326,22 @@ TeachingContract.hasMany(AdvisorResponsibility, {
   foreignKey: 'contract_id',
   as: 'advisorResponsibilities',
 });
+
+// Advisor contract relationships (separate from TeachingContract)
+AdvisorContract.belongsTo(User, {
+  foreignKey: 'lecturer_user_id',
+  as: 'lecturer',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+AdvisorContract.belongsTo(User, {
+  foreignKey: 'created_by',
+  as: 'creator',
+  onDelete: 'RESTRICT',
+  onUpdate: 'CASCADE',
+});
+User.hasMany(AdvisorContract, { foreignKey: 'lecturer_user_id', as: 'advisorContracts' });
+User.hasMany(AdvisorContract, { foreignKey: 'created_by', as: 'createdAdvisorContracts' });
 
 // Evaluation relationships
 Evaluation.hasMany(EvaluationSubmission, {
@@ -440,9 +475,11 @@ export {
   University,
   TeachingContract,
   TeachingContractCourse,
+  ContractRedoRequest,
   NewContract,
   ContractItem,
   AdvisorResponsibility,
+  AdvisorContract,
   Schedule,
   ScheduleEntry,
   Evaluation,

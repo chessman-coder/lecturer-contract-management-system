@@ -43,8 +43,8 @@ export const CONTRACT_STATUS_ALIAS_MAP = Object.freeze({
 export const CONTRACT_ALLOWED_STATUSES = Object.freeze([
   'WAITING_LECTURER',
   'WAITING_MANAGEMENT',
-  'COMPLETED',
   'REQUEST_REDO',
+  'COMPLETED',
 ]);
 
 // HTTP status codes for readability

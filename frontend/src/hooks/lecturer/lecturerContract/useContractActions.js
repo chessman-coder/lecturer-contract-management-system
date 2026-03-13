@@ -2,8 +2,11 @@ import { useState } from 'react';
 import { 
   getContractPdfBlob, 
   getContractPdfUrl, 
+  getAdvisorContractPdfBlob,
+  getAdvisorContractPdfUrl,
   uploadContractSignature 
 } from '../../../services/contract.service';
+import { uploadAdvisorContractSignature } from '../../../services/advisorContract.service';
 import { makePdfFilenameForContract } from '../../../utils/lecturerContractHelpers';
 
 /**
@@ -19,8 +22,9 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
   /**
    * Preview contract PDF in new tab
    */
-  const previewPdf = (contractId) => {
-    const url = getContractPdfUrl(contractId);
+  const previewPdf = (contractId, contract) => {
+    const t = String(contract?.contract_type || '').toUpperCase();
+    const url = t === 'ADVISOR' ? getAdvisorContractPdfUrl(contractId) : getContractPdfUrl(contractId);
     window.open(url, '_blank');
   };
 
@@ -29,9 +33,10 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
    */
   const downloadPdf = async (contract) => {
     const id = typeof contract === 'object' ? contract?.id : contract;
+    const t = typeof contract === 'object' ? String(contract?.contract_type || '').toUpperCase() : '';
     
     try {
-      const blobData = await getContractPdfBlob(id);
+      const blobData = t === 'ADVISOR' ? await getAdvisorContractPdfBlob(id) : await getContractPdfBlob(id);
       const blob = new Blob([blobData], { type: 'application/pdf' });
       
       const filename = makePdfFilenameForContract(
@@ -50,7 +55,7 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
       window.URL.revokeObjectURL(url);
     } catch (e) {
       // Fallback: open in new tab
-      const url = getContractPdfUrl(id);
+      const url = t === 'ADVISOR' ? getAdvisorContractPdfUrl(id) : getContractPdfUrl(id);
       window.open(url, '_blank');
     }
   };
@@ -60,10 +65,15 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
    */
   const uploadSignature = async (contractId, file) => {
     if (!file) return;
+    const t = String(selectedContract?.contract_type || '').toUpperCase();
     
     setUploading(true);
     try {
-      await uploadContractSignature(contractId, file, 'lecturer');
+      if (t === 'ADVISOR') {
+        await uploadAdvisorContractSignature(contractId, file, 'advisor');
+      } else {
+        await uploadContractSignature(contractId, file, 'lecturer');
+      }
       await fetchContracts();
     } catch (e) {
       // Silent fail

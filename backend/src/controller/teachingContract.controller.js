@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import {
   TeachingContract,
   TeachingContractCourse,
+  ContractRedoRequest,
   User,
   LecturerProfile,
   ClassModel,
@@ -763,14 +764,93 @@ export async function generatePdf(req, res) {
 export async function updateStatus(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
-    const { status } = req.body;
+    const body = req.validated?.body || req.body || {};
+    const { status, remarks } = body;
     // Validation handled by middleware; status is already safe
     const contract = await TeachingContract.findByPk(id);
     if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const role = String(req.user?.role || '').toLowerCase();
+    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
     if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
       const ok = await isContractInManagerDept(contract.id, req);
       if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
     }
+
+    // Completed contracts are immutable status-wise
+    if (contract.status === 'COMPLETED' && status !== 'COMPLETED') {
+      return res
+        .status(HTTP_STATUS.BAD_REQUEST)
+        .json({ message: 'Completed contracts cannot change status' });
+    }
+
+    // REQUEST_REDO can be requested by the lecturer (own contract) or management-side roles
+    if (status === 'REQUEST_REDO') {
+      const canRequestRedo =
+        role === 'lecturer' || role === 'management';
+      if (!canRequestRedo) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+      }
+      if (!String(remarks || '').trim()) {
+        return res
+          .status(HTTP_STATUS.BAD_REQUEST)
+          .json({ message: 'remarks is required when requesting redo' });
+      }
+      if (!['WAITING_LECTURER', 'WAITING_MANAGEMENT', 'REQUEST_REDO'].includes(contract.status)) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: 'Invalid status transition' });
+      }
+
+      const tx = await sequelize.transaction();
+      try {
+        await ContractRedoRequest.create(
+          {
+            contract_id: contract.id,
+            requester_user_id: req.user.id,
+            requester_role: role === 'lecturer' ? 'LECTURER' : 'MANAGEMENT',
+            message: String(remarks).trim(),
+          },
+          { transaction: tx }
+        );
+
+        await contract.update(
+          {
+            status: 'REQUEST_REDO',
+            management_remarks: String(remarks).trim(),
+            // Force re-sign + re-generate PDF after edits
+            lecturer_signature_path: null,
+            management_signature_path: null,
+            lecturer_signed_at: null,
+            management_signed_at: null,
+            pdf_path: null,
+          },
+          { transaction: tx }
+        );
+
+        await tx.commit();
+        return res.json({ message: 'Updated', status: 'REQUEST_REDO' });
+      } catch (innerErr) {
+        try {
+          await tx.rollback();
+        } catch {}
+        return res
+          .status(HTTP_STATUS.BAD_REQUEST)
+          .json({ message: 'Failed to request redo', error: innerErr?.message || 'Unknown error' });
+      }
+    }
+
+    // Guardrails for manual status updates
+    if (status === 'WAITING_MANAGEMENT' && !contract.lecturer_signed_at) {
+      return res
+        .status(HTTP_STATUS.BAD_REQUEST)
+        .json({ message: 'Lecturer signature is required before waiting management' });
+    }
+    if (status === 'COMPLETED' && (!contract.lecturer_signed_at || !contract.management_signed_at)) {
+      return res
+        .status(HTTP_STATUS.BAD_REQUEST)
+        .json({ message: 'Both signatures are required before completing' });
+    }
+
     await contract.update({ status });
 
     try {
@@ -794,6 +874,313 @@ export async function updateStatus(req, res) {
   } catch (e) {
     console.error('[updateStatus]', e);
     return res.status(HTTP_STATUS.SERVER_ERROR).json({ message: 'Failed to update status', error: e.message });
+  }
+}
+
+export async function listRedoRequests(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const contract = await TeachingContract.findByPk(id);
+    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+
+    const role = String(req.user?.role || '').toLowerCase();
+    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+    if (['admin', 'management'].includes(role)) {
+      const ok = await isContractInManagerDept(contract.id, req);
+      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+
+    const rows = await ContractRedoRequest.findAll({
+      where: { contract_id: id },
+      include: [{ model: User, as: 'requester', attributes: ['id', 'email', 'display_name'] }],
+      order: [['created_at', 'DESC']],
+    });
+    return res.json({ data: rows });
+  } catch (e) {
+    console.error('[listRedoRequests]', e);
+    return res
+      .status(HTTP_STATUS.SERVER_ERROR)
+      .json({ message: 'Failed to list redo requests', error: e.message });
+  }
+}
+
+export async function createRedoRequest(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const body = req.validated?.body || req.body || {};
+    const message = String(body.message || '').trim();
+
+    const contract = await TeachingContract.findByPk(id);
+    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+
+    const role = String(req.user?.role || '').toLowerCase();
+    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+    if (role === 'management' || role === 'admin') {
+      const ok = await isContractInManagerDept(contract.id, req);
+      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+
+    const requesterRole = role === 'lecturer' ? 'LECTURER' : 'MANAGEMENT';
+
+    const tx = await sequelize.transaction();
+    try {
+      const reqRow = await ContractRedoRequest.create(
+        {
+          contract_id: id,
+          requester_user_id: req.user.id,
+          requester_role: requesterRole,
+          message,
+        },
+        { transaction: tx }
+      );
+
+      await contract.update(
+        {
+          status: 'REQUEST_REDO',
+          // Keep legacy field populated for UI compatibility
+          management_remarks: message || null,
+          lecturer_signature_path: null,
+          management_signature_path: null,
+          lecturer_signed_at: null,
+          management_signed_at: null,
+          pdf_path: null,
+        },
+        { transaction: tx }
+      );
+
+      await tx.commit();
+      return res.status(HTTP_STATUS.CREATED).json({ id: reqRow.id });
+    } catch (innerErr) {
+      try {
+        await tx.rollback();
+      } catch {}
+      return res
+        .status(HTTP_STATUS.BAD_REQUEST)
+        .json({ message: 'Failed to create redo request', error: innerErr?.message || 'Unknown error' });
+    }
+  } catch (e) {
+    console.error('[createRedoRequest]', e);
+    return res
+      .status(HTTP_STATUS.SERVER_ERROR)
+      .json({ message: 'Failed to create redo request', error: e.message });
+  }
+}
+
+export async function updateRedoRequestStatus(req, res) {
+  try {
+    const contractId = parseInt(req.params.id, 10);
+    const requestId = parseInt(req.params.requestId, 10);
+    const body = req.validated?.body || req.body || {};
+    const { resolved } = body;
+
+    const contract = await TeachingContract.findByPk(contractId);
+    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+
+    const role = String(req.user?.role || '').toLowerCase();
+    if (role === 'lecturer') {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+    if (['admin', 'management'].includes(role)) {
+      const ok = await isContractInManagerDept(contract.id, req);
+      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+
+    const row = await ContractRedoRequest.findOne({
+      where: { id: requestId, contract_id: contractId },
+    });
+    if (!row) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Redo request not found' });
+
+    await row.update({
+      resolved_at: resolved ? new Date() : null,
+      resolved_by_user_id: resolved ? req.user.id : null,
+    });
+    return res.json({ message: 'Updated', resolved: !!resolved });
+  } catch (e) {
+    console.error('[updateRedoRequestStatus]', e);
+    return res
+      .status(HTTP_STATUS.SERVER_ERROR)
+      .json({ message: 'Failed to update redo request', error: e.message });
+  }
+}
+
+// Edit contract details. Allowed only when status=REQUEST_REDO.
+// Editing resets signatures and moves the contract back to WAITING_LECTURER.
+export async function editContract(req, res) {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const body = req.validated?.body || req.body || {};
+
+    const contract = await TeachingContract.findByPk(id);
+    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+
+    const role = String(req.user?.role || '').toLowerCase();
+    if (role !== 'admin') {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+    if (['admin', 'management'].includes(role)) {
+      const ok = await isContractInManagerDept(contract.id, req);
+      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    }
+
+    if (contract.status !== 'REQUEST_REDO') {
+      return res
+        .status(HTTP_STATUS.CONFLICT)
+        .json({ message: 'Contract can only be edited when status is REQUEST_REDO' });
+    }
+
+    const toDateOnly = (v) => {
+      if (v === null || v === undefined || v === '') return null;
+      try {
+        const d = new Date(v);
+        if (isNaN(d.getTime())) return null;
+        return d.toISOString().slice(0, 10);
+      } catch {
+        return null;
+      }
+    };
+
+    const normalizedItems = Object.prototype.hasOwnProperty.call(body, 'items')
+      ? normalizeItems(body.items)
+      : null;
+
+    const coursesIn = Array.isArray(body?.courses) ? body.courses : null;
+
+    // If admin, ensure any provided courses belong to their department
+    if (coursesIn && role === 'admin') {
+      const deptId = await resolveManagerDeptId(req);
+      if (!deptId) {
+        return res
+          .status(HTTP_STATUS.FORBIDDEN)
+          .json({ message: 'Access denied: department not set for your account' });
+      }
+      const ids = Array.from(
+        new Set(
+          coursesIn
+            .map((c) => parseInt(c?.course_id, 10))
+            .filter((n) => Number.isInteger(n) && n > 0)
+        )
+      );
+      if (!ids.length) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          message: 'Validation error',
+          errors: ['courses must reference valid course_id values'],
+        });
+      }
+      const okCount = await Course.count({ where: { id: ids, dept_id: deptId } });
+      if (okCount !== ids.length) {
+        return res
+          .status(HTTP_STATUS.FORBIDDEN)
+          .json({ message: 'You can only use courses from your department' });
+      }
+    }
+
+    const tx = await sequelize.transaction();
+    try {
+      const updatePayload = {
+        // After any edit, require fresh signatures and PDF
+        status: 'WAITING_LECTURER',
+        lecturer_signature_path: null,
+        management_signature_path: null,
+        lecturer_signed_at: null,
+        management_signed_at: null,
+        pdf_path: null,
+      };
+
+      if (body.academic_year !== undefined) updatePayload.academic_year = body.academic_year;
+      if (body.term !== undefined) updatePayload.term = String(body.term);
+      if (Object.prototype.hasOwnProperty.call(body, 'year_level')) {
+        updatePayload.year_level = body.year_level ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'start_date')) {
+        updatePayload.start_date = toDateOnly(body.start_date);
+      }
+      if (Object.prototype.hasOwnProperty.call(body, 'end_date')) {
+        updatePayload.end_date = toDateOnly(body.end_date);
+      }
+      if (normalizedItems !== null) updatePayload.items = normalizedItems;
+
+      await contract.update(updatePayload, { transaction: tx });
+
+      if (coursesIn) {
+        const termFallback = body.term !== undefined ? String(body.term) : contract.term;
+        const academicYearFallback =
+          body.academic_year !== undefined ? body.academic_year : contract.academic_year;
+        const courses = coursesIn
+          .map((c) => ({
+            course_id: c?.course_id ?? null,
+            class_id: c?.class_id ?? null,
+            course_name: c?.course_name ?? '',
+            year_level: c?.year_level ?? null,
+            term: c?.term ?? termFallback,
+            academic_year: c?.academic_year ?? academicYearFallback,
+            hours: Number.isFinite(Number(c?.hours)) ? Number(c.hours) : null,
+          }))
+          .filter((c) => c.course_id !== null && c.course_id !== undefined);
+
+        if (!courses.length) {
+          throw new Error('courses are malformed (need at least course_id)');
+        }
+
+        await TeachingContractCourse.destroy({ where: { contract_id: id }, transaction: tx });
+        for (const c of courses) {
+          const cid = Number.isFinite(Number(c.course_id)) ? Number(c.course_id) : null;
+          await TeachingContractCourse.create(
+            {
+              contract_id: id,
+              course_id: cid,
+              class_id: c.class_id || null,
+              course_name: c.course_name,
+              year_level: c.year_level || null,
+              term: String(c.term),
+              academic_year: String(c.academic_year),
+              hours: c.hours,
+            },
+            { transaction: tx }
+          );
+        }
+      }
+
+      if (normalizedItems !== null) {
+        await ContractItem.destroy({ where: { contract_id: id }, transaction: tx });
+        if (normalizedItems.length) {
+          const rows = normalizedItems.map((text) => ({ contract_id: id, duties: text }));
+          await ContractItem.bulkCreate(rows, { transaction: tx });
+        }
+      }
+
+      await tx.commit();
+
+      // Auto-resolve any open redo requests once an edit is submitted
+      try {
+        await ContractRedoRequest.update(
+          {
+            resolved_at: new Date(),
+            resolved_by_user_id: req.user.id,
+          },
+          { where: { contract_id: id, resolved_at: null } }
+        );
+      } catch {}
+      return res.json({ message: 'Updated', id, status: 'WAITING_LECTURER' });
+    } catch (innerErr) {
+      try {
+        await tx.rollback();
+      } catch {}
+      return res
+        .status(HTTP_STATUS.BAD_REQUEST)
+        .json({ message: 'Failed to edit contract', error: innerErr?.message || 'Unknown error' });
+    }
+  } catch (e) {
+    console.error('[editContract]', e);
+    return res
+      .status(HTTP_STATUS.SERVER_ERROR)
+      .json({ message: 'Failed to edit contract', error: e.message });
   }
 }
 
