@@ -24,12 +24,17 @@ import ContractItem from './contractItem.model.js';
 import AdvisorResponsibility from './advisorResponsibility.model.js';
 import AdvisorContract from './advisorContract.model.js';
 import Schedule from './schedule.model.js';
-import Evaluation from './evaluation.model.js';
-import HourRating from './hourRating.model.js';
-import RateHistory from './rateHistory.model.js';
+import ScheduleEntry from './scheduleEntry.model.js';
 import { TimeSlot } from './timeSlot.model.js';
 import Group from './group.model.js';
 import Specialization from './specialization.model.js';
+import Evaluation from './evaluation/evaluation.model.js';
+import EvaluationSubmission from './evaluation/evaluationSubmission.model.js';
+import LecturerEvaluation from './evaluation/lecturerEvaluation.model.js';
+import EvaluationResponse from './evaluation/evaluationResponse.model.js';
+import EvaluationQuestion from './evaluation/evaluationQuestion.model.js';
+import EvaluationLecturer from './evaluation/evaluationLecturer.model.js';
+import Notification from './notification.js';
 
 // Set up associations
 
@@ -58,6 +63,18 @@ User.hasOne(LecturerProfile, {
 LecturerProfile.belongsTo(User, {
   foreignKey: 'user_id',
   onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+// Candidate - LecturerProfile (One-to-One)
+LecturerProfile.belongsTo(Candidate, {
+  foreignKey: 'candidate_id',
+  onDelete: 'SET NULL',
+  onUpdate: 'CASCADE',
+});
+Candidate.hasOne(LecturerProfile, {
+  foreignKey: 'candidate_id',
+  onDelete: 'SET NULL',
   onUpdate: 'CASCADE',
 });
 
@@ -194,20 +211,45 @@ Department.hasMany(CourseMapping, {
   foreignKey: 'dept_id',
 });
 
-CourseMapping.hasMany(Schedule, {
+CourseMapping.hasMany(ScheduleEntry, {
   foreignKey: 'course_mapping_id',
 });
 
-Schedule.belongsTo(CourseMapping, {
+ScheduleEntry.belongsTo(CourseMapping, {
   foreignKey: 'course_mapping_id',
 });
 
-TimeSlot.hasMany(Schedule, {
+CourseMapping.hasMany(Evaluation, {
+  foreignKey: 'course_mapping_id',
+});
+Evaluation.belongsTo(CourseMapping, {
+  foreignKey: 'course_mapping_id',
+});
+
+TimeSlot.hasMany(ScheduleEntry, {
   foreignKey: 'time_slot_id',
 });
 
-Schedule.belongsTo(TimeSlot, {
+ScheduleEntry.belongsTo(TimeSlot, {
   foreignKey: 'time_slot_id',
+});
+
+// Schedule - Group relationships
+Schedule.belongsTo(Group, {
+  foreignKey: 'group_id',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+Group.hasMany(Schedule, {
+  foreignKey: 'group_id',
+});
+
+// Schedule - ScheduleEntry relationships
+Schedule.hasMany(ScheduleEntry, {
+  foreignKey: 'schedule_id',
+});
+ScheduleEntry.belongsTo(Schedule, {
+  foreignKey: 'schedule_id',
 });
 
 // Teaching contract relationships
@@ -231,7 +273,16 @@ TeachingContractCourse.belongsTo(TeachingContract, {
   onDelete: 'CASCADE',
   onUpdate: 'CASCADE',
 });
-TeachingContract.hasMany(TeachingContractCourse, { foreignKey: 'contract_id', as: 'courses' });
+TeachingContract.hasMany(TeachingContractCourse, { foreignKey: 'contract_id', as: 'contractCourses' });
+
+TeachingContract.prototype.toJSON = function () {
+  const data = { ...this.get() };
+  if (data.contractCourses !== undefined) {
+    data.courses = data.contractCourses;
+    delete data.contractCourses;
+  }
+  return data;
+};
 
 TeachingContractCourse.belongsTo(Course, {
   foreignKey: 'course_id',
@@ -293,63 +344,54 @@ User.hasMany(AdvisorContract, { foreignKey: 'lecturer_user_id', as: 'advisorCont
 User.hasMany(AdvisorContract, { foreignKey: 'created_by', as: 'createdAdvisorContracts' });
 
 // Evaluation relationships
-Evaluation.belongsTo(LecturerProfile, {
-  foreignKey: 'lecturer_profile_id',
-  as: 'lecturer',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
+Evaluation.hasMany(EvaluationSubmission, {
+  foreignKey: 'evaluation_id',
 });
-LecturerProfile.hasMany(Evaluation, { foreignKey: 'lecturer_profile_id', as: 'evaluations' });
+EvaluationSubmission.belongsTo(Evaluation, {
+  foreignKey: 'evaluation_id',
+});
 
-Evaluation.belongsTo(Course, {
-  foreignKey: 'course_id',
-  as: 'course',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
+Evaluation.hasMany(EvaluationLecturer, {
+  foreignKey: 'evaluation_id',
 });
-Course.hasMany(Evaluation, { foreignKey: 'course_id', as: 'evaluations' });
+EvaluationLecturer.belongsTo(Evaluation, {
+  foreignKey: 'evaluation_id',
+});
 
-Evaluation.belongsTo(ClassModel, {
-  foreignKey: 'class_id',
-  as: 'class',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE',
+EvaluationLecturer.belongsTo(LecturerProfile, {
+  foreignKey: 'lecturer_id',
 });
-ClassModel.hasMany(Evaluation, { foreignKey: 'class_id', as: 'evaluations' });
+LecturerProfile.hasMany(EvaluationLecturer, {
+  foreignKey: 'lecturer_id',
+});
 
-// Hour Rating relationships
-HourRating.belongsTo(LecturerProfile, {
-  foreignKey: 'lecturer_profile_id',
-  as: 'lecturer',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
+EvaluationSubmission.hasMany(LecturerEvaluation, {
+  foreignKey: 'submission_id',
 });
-LecturerProfile.hasOne(HourRating, { foreignKey: 'lecturer_profile_id', as: 'hourRating' });
+LecturerEvaluation.belongsTo(EvaluationSubmission, {
+  foreignKey: 'submission_id',
+});
 
-HourRating.belongsTo(User, {
-  foreignKey: 'rate_change_approved_by',
-  as: 'approver',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE',
+LecturerEvaluation.belongsTo(LecturerProfile, {
+  foreignKey: 'lecturer_id',
 });
-User.hasMany(HourRating, { foreignKey: 'rate_change_approved_by', as: 'approvedRateChanges' });
+LecturerProfile.hasMany(LecturerEvaluation, {
+  foreignKey: 'lecturer_id',
+});
 
-// Rate History relationships
-RateHistory.belongsTo(LecturerProfile, {
-  foreignKey: 'lecturer_profile_id',
-  as: 'lecturer',
-  onDelete: 'CASCADE',
-  onUpdate: 'CASCADE',
+LecturerEvaluation.hasMany(EvaluationResponse, {
+  foreignKey: 'lecturer_evaluation_id',
 });
-LecturerProfile.hasMany(RateHistory, { foreignKey: 'lecturer_profile_id', as: 'rateHistory' });
+EvaluationResponse.belongsTo(LecturerEvaluation, {
+  foreignKey: 'lecturer_evaluation_id',
+});
 
-RateHistory.belongsTo(User, {
-  foreignKey: 'approved_by',
-  as: 'approver',
-  onDelete: 'SET NULL',
-  onUpdate: 'CASCADE',
+EvaluationResponse.belongsTo(EvaluationQuestion, {
+  foreignKey: 'question_id',
 });
-User.hasMany(RateHistory, { foreignKey: 'approved_by', as: 'approvedRates' });
+EvaluationQuestion.hasMany(EvaluationResponse, {
+  foreignKey: 'question_id',
+});
 
 // Contract items (used by teaching contracts and simple contracts)
 TeachingContract.hasMany(ContractItem, { foreignKey: 'contract_id', as: 'contractItems' });
@@ -401,6 +443,17 @@ CandidateQuestion.belongsTo(InterviewQuestion, {
   onUpdate: 'CASCADE',
 });
 
+Notification.belongsTo(User, {
+  foreignKey: 'user_id',
+  as: 'user',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+User.hasMany(Notification, {
+  foreignKey: 'user_id',
+});
+
 // Export all models
 export {
   User,
@@ -428,9 +481,17 @@ export {
   AdvisorResponsibility,
   AdvisorContract,
   Schedule,
+  ScheduleEntry,
   Evaluation,
-  HourRating,
-  RateHistory,
+  EvaluationSubmission,
+  LecturerEvaluation,
+  EvaluationResponse,
+  EvaluationQuestion,
+  EvaluationLecturer,
+  TimeSlot,
+  Group,
+  Specialization,
+  Notification,
 };
 
 // Default export (User for backward compatibility)

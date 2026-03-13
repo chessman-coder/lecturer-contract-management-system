@@ -22,6 +22,7 @@ import {
   PAGINATION_MAX_LIMIT,
   CONTRACT_STATUS_ALIAS_MAP,
 } from '../config/constants.js';
+import { getNotificationSocket } from '../socket/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -238,8 +239,23 @@ export async function createDraftContract(req, res) {
         const rows = normalizedItems.map((text) => ({ contract_id: contract.id, duties: text }));
         await ContractItem.bulkCreate(rows, { transaction: tx });
       }
+      
 
       await tx.commit();
+
+      try {
+        const notificationSocket = getNotificationSocket();
+        await notificationSocket.contractStatusChanged({
+            contractId: contract.id,
+            newStatus: "WAITING_LECTURER",
+            recipient: parsedLecturerId,
+        });
+        notificationSocket.broadcastToRole({ role: 'management', type: 'status_change', message: `Contract #${contract.id} created, awaiting lecturer signature`, contractId: contract.id });
+        notificationSocket.broadcastToRole({ role: 'admin', type: 'status_change', message: `Contract #${contract.id} created, awaiting lecturer signature`, contractId: contract.id });
+      } catch (error) {
+        console.error('error status for socket', error);
+      }
+
       return res.status(HTTP_STATUS.CREATED).json({ id: contract.id });
     } catch (innerErr) {
       try {
@@ -274,7 +290,7 @@ export async function getContract(req, res) {
       include: [
         { 
           model: TeachingContractCourse, 
-          as: 'courses',
+          as: 'contractCourses',
           include: [
             {
               model: Course,
@@ -339,7 +355,7 @@ export async function listContracts(req, res) {
     const include = [
       {
         model: TeachingContractCourse,
-        as: 'courses',
+        as: 'contractCourses',
         include: [
           {
             model: Course,
@@ -365,7 +381,7 @@ export async function listContracts(req, res) {
       }
       include[0] = {
         model: TeachingContractCourse,
-        as: 'courses',
+        as: 'contractCourses',
         required: true,
         include: [
           {
@@ -502,7 +518,7 @@ export async function generatePdf(req, res) {
       include: [
         {
           model: TeachingContractCourse,
-          as: 'courses',
+          as: 'contractCourses',
           include: [{ model: ClassModel, attributes: ['name', 'year_level'], required: false }],
         },
         {
@@ -577,8 +593,8 @@ export async function generatePdf(req, res) {
     const startDate = (contract.start_date ? new Date(contract.start_date) : new Date())
       .toISOString()
       .slice(0, 10);
-    const subject = contract.courses[0]?.course_name || 'Course';
-    const hours = contract.courses.reduce((a, c) => a + (c.hours || 0), 0) || 0;
+    const subject = contract.contractCourses[0]?.course_name || 'Course';
+    const hours = contract.contractCourses.reduce((a, c) => a + (c.hours || 0), 0) || 0;
 
     // Lookup hourly rate (USD) from Candidate profile by name or email
     let hourlyRateUsd = 0;
@@ -617,7 +633,7 @@ export async function generatePdf(req, res) {
     const monthlyKhr = Math.round(totalKhr / 3);
 
     // Build generation/class string: "Class Name (Year Level)"
-    const firstCourse = contract.courses?.find((c) => c?.Class) || contract.courses?.[0] || null;
+    const firstCourse = contract.contractCourses?.find((c) => c?.Class) || contract.contractCourses?.[0] || null;
     const className = firstCourse?.Class?.name || '';
     const yearLevel =
       firstCourse?.year_level || firstCourse?.Class?.year_level || contract.year_level || '';
@@ -836,7 +852,25 @@ export async function updateStatus(req, res) {
     }
 
     await contract.update({ status });
-    return res.json({ message: 'Updated', status });
+
+    try {
+      const notificationSocket = getNotificationSocket();
+      if (status === 'REQUEST_REDO') {
+        notificationSocket.broadcastToRole({ role: 'admin', type: 'status_change', message: `Contract #${contract.id} redo requested by lecturer`, contractId: contract.id });
+        notificationSocket.broadcastToRole({ role: 'management', type: 'status_change', message: `Contract #${contract.id} redo requested by lecturer`, contractId: contract.id });
+      } else {
+        await notificationSocket.contractStatusChanged({
+          contractId: contract.id,
+          newStatus: status,
+          recipient: contract.lecturer_user_id,
+          changedBy: req.user?.id || null,
+        });
+      }
+    } catch (notifErr) {
+      console.error('[updateStatus] notification failed:', notifErr);
+    }
+
+    return res.json({ message: 'Updated' });
   } catch (e) {
     console.error('[updateStatus]', e);
     return res.status(HTTP_STATUS.SERVER_ERROR).json({ message: 'Failed to update status', error: e.message });
@@ -1259,6 +1293,13 @@ export async function uploadSignature(req, res) {
         lecturer_signed_at: now,
         status: next,
       });
+      try {
+        const notificationSocket = getNotificationSocket();
+        notificationSocket.broadcastToRole({ role: 'management', type: 'status_change', message: `Contract #${contract.id} signed by lecturer, awaiting your signature`, contractId: contract.id });
+        notificationSocket.broadcastToRole({ role: 'admin', type: 'status_change', message: `Contract #${contract.id} signed by lecturer`, contractId: contract.id });
+      } catch (notifErr) {
+        console.error('[uploadSignature] notification failed:', notifErr);
+      }
     } else {
       // Management signing moves status to WAITING_LECTURER unless lecturer already signed (then COMPLETED)
       const next = contract.lecturer_signed_at ? 'COMPLETED' : 'WAITING_LECTURER';
@@ -1267,6 +1308,13 @@ export async function uploadSignature(req, res) {
         management_signed_at: now,
         status: next,
       });
+      try {
+        const notificationSocket = getNotificationSocket();
+        notificationSocket.notifyLecturer({ user_id: contract.lecturer_user_id, type: 'status_change', message: `Contract #${contract.id} has been completed`, contract_id: contract.id });
+        notificationSocket.broadcastToRole({ role: 'admin', type: 'status_change', message: `Contract #${contract.id} completed`, contractId: contract.id });
+      } catch (notifErr) {
+        console.error('[uploadSignature] notification failed:', notifErr);
+      }
     }
     return res.json({ message: 'Signature uploaded', path: filePath, status: contract.status });
   } catch (e) {

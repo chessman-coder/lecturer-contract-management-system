@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { fn, col, where, Op } from 'sequelize';
 import sequelize from '../config/db.js';
 import { LecturerProfile, User, Department } from '../model/index.js';
 import Candidate from '../model/candidate.model.js';
@@ -31,6 +30,7 @@ const LECTURER_PROFILE_EDITABLE_FIELDS = [
 const toResponse = (p, user, departments = [], courses = []) => ({
   id: p.id,
   user_id: p.user_id,
+  candidate_id: p.candidate_id || null,
   employee_id: p.employee_id,
   title: p.title,
   gender: p.gender,
@@ -85,56 +85,17 @@ export const getMyLecturerProfile = async (req, res) => {
       where: { lecturer_profile_id: profile.id },
       include: [{ model: Course }],
     });
-    // Lookup hourly rate from Candidate:
-    // 1) Try matching by email first (most reliable), 2) fallback to cleaned full name
+    // Lookup hourly rate from Candidate using direct candidate_id reference
     let hourlyRateThisYear = null;
     try {
-      let cand = null;
-      
-      // Primary: Try email match first (most reliable)
-      if (user?.email) {
-        cand = await Candidate.findOne({ 
-          where: { email: user.email },
-          attributes: ['id', 'fullName', 'email', 'hourlyRate']
+      if (profile.candidate_id) {
+        const cand = await Candidate.findByPk(profile.candidate_id, {
+          attributes: ['id', 'fullName', 'email', 'hourlyRate'],
         });
-        console.log(`[getMyLecturerProfile] Email lookup for ${user.email}:`, cand ? `Found (hourlyRate: ${cand.hourlyRate})` : 'Not found');
-      }
-      
-      // Fallback: Try name matching with title normalization
-      if (!cand && (profile.full_name_english || user?.display_name)) {
-        const rawName = profile.full_name_english || user?.display_name || '';
-        
-        if (rawName) {
-          // Try exact match first (case-insensitive)
-          cand = await Candidate.findOne({
-            where: where(fn('LOWER', fn('TRIM', col('fullName'))), fn('LOWER', rawName.trim())),
-            attributes: ['id', 'fullName', 'email', 'hourlyRate']
-          });
-          
-          // If no exact match, try fuzzy matching by removing titles from both sides
-          if (!cand) {
-            const allCandidates = await Candidate.findAll({
-              attributes: ['id', 'fullName', 'email', 'hourlyRate']
-            });
-            
-            const titleRegex = /^(mr\.?|ms\.?|mrs\.?|dr\.?|prof\.?|professor|miss)\s+/i;
-            const normalizeName = (s = '') =>
-              String(s).trim().replace(titleRegex, '').replace(/\s+/g, ' ').trim().toLowerCase();
-            
-            const targetNormalized = normalizeName(rawName);
-            cand = allCandidates.find(c => normalizeName(c.fullName) === targetNormalized);
-          }
-          
-          console.log(`[getMyLecturerProfile] Name lookup for "${rawName}":`, cand ? `Found (id: ${cand.id}, hourlyRate: ${cand.hourlyRate})` : 'Not found');
+
+        if (cand && cand.hourlyRate != null) {
+          hourlyRateThisYear = String(cand.hourlyRate);
         }
-      }
-      
-      if (cand && cand.hourlyRate != null) {
-        hourlyRateThisYear = String(cand.hourlyRate);
-      } else if (cand) {
-        console.warn(`[getMyLecturerProfile] Candidate found but hourlyRate is null for user ${user?.email}`);
-      } else {
-        console.warn(`[getMyLecturerProfile] No candidate record found for user ${user?.email} / ${profile.full_name_english}`);
       }
     } catch (err) {
       console.error('[getMyLecturerProfile] candidate lookup failed:', err.message);
@@ -157,44 +118,21 @@ export const getMyLecturerProfile = async (req, res) => {
 };
 
 // GET /api/lecturer-profile/me/candidate-contact
-// Returns phone and personal email from the Candidate row matched to the logged-in lecturer
+// Returns phone and personal email from the Candidate row using direct candidate_id reference
 export const getMyCandidateContact = async (req, res) => {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: 'Unauthorized' });
-    
-    const user = await User.findByPk(userId);
-    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    const profile = await LecturerProfile.findOne({ where: { user_id: userId } });
+    if (!profile) return res.status(404).json({ message: 'Lecturer profile not found' });
 
     let cand = null;
     try {
-      // First try matching by email (most reliable)
-      if (user.email) {
-        cand = await Candidate.findOne({ where: { email: user.email } });
-      }
-      
-      // If not found by email, try matching by name using raw SQL to normalize both sides
-      if (!cand) {
-        const profile = await LecturerProfile.findOne({ where: { user_id: userId } });
-        const rawName = profile?.full_name_english || user.display_name || '';
-        
-        if (rawName) {
-          // Use raw SQL to strip titles from both the candidate name and search term
-          // MySQL 8.0 REGEXP_REPLACE syntax: REGEXP_REPLACE(str, pattern, replacement, position, occurrence, match_type)
-          const [results] = await sequelize.query(`
-            SELECT * FROM Candidates 
-            WHERE LOWER(TRIM(REGEXP_REPLACE(fullName, '^(mr\\.?|ms\\.?|mrs\\.?|dr\\.?|prof\\.?|professor|miss)\\\\s+', '', 1, 0, 'i')))
-            = LOWER(TRIM(REGEXP_REPLACE(?, '^(mr\\.?|ms\\.?|mrs\\.?|dr\\.?|prof\\.?|professor|miss)\\\\s+', '', 1, 0, 'i')))
-            LIMIT 1
-          `, {
-            replacements: [rawName],
-            type: sequelize.QueryTypes.SELECT
-          });
-          
-          if (results) {
-            cand = results;
-          }
-        }
+      if (profile.candidate_id) {
+        cand = await Candidate.findByPk(profile.candidate_id, {
+          attributes: ['id', 'phone', 'email'],
+        });
       }
     } catch (e) {
       console.warn('[getMyCandidateContact] candidate lookup error:', e.message);
@@ -397,7 +335,7 @@ export const getCandidatesDoneSinceLogin = async (req, res) => {
 
     // For each candidate, find their user account and check if status changed after last login
     const results = [];
-    
+
     for (const candidate of doneCandidates) {
       try {
         // Find user by matching email
@@ -433,7 +371,10 @@ export const getCandidatesDoneSinceLogin = async (req, res) => {
           });
         }
       } catch (userErr) {
-        console.warn(`[getCandidatesDoneSinceLogin] Error processing candidate ${candidate.id}:`, userErr.message);
+        console.warn(
+          `[getCandidatesDoneSinceLogin] Error processing candidate ${candidate.id}:`,
+          userErr.message
+        );
       }
     }
 
@@ -445,9 +386,9 @@ export const getCandidatesDoneSinceLogin = async (req, res) => {
     });
   } catch (e) {
     console.error('getCandidatesDoneSinceLogin error', e);
-    return res.status(500).json({ 
-      message: 'Server error', 
-      error: e.message 
+    return res.status(500).json({
+      message: 'Server error',
+      error: e.message,
     });
   }
 };
@@ -491,9 +432,9 @@ export const getCandidatesDoneSinceLoginOptimized = async (req, res) => {
     });
   } catch (e) {
     console.error('getCandidatesDoneSinceLoginOptimized error', e);
-    return res.status(500).json({ 
-      message: 'Server error', 
-      error: e.message 
+    return res.status(500).json({
+      message: 'Server error',
+      error: e.message,
     });
   }
 };

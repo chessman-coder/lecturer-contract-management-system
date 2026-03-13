@@ -136,7 +136,8 @@ export default function ContractGenerationDialog({
         courses: selectedCoursesPayload,
         start_date: dlgStartDate,
         end_date: dlgEndDate,
-        items: dlgItems
+        items: dlgItems,
+        hourly_rate: dlgHourlyRate ? parseFloat(dlgHourlyRate) : null,
       });
       
       // Reset form
