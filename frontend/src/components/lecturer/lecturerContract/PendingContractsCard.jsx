@@ -1,23 +1,30 @@
-import React from 'react';
-import { Clock, FileText, Eye, PenTool } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../ui/Card';
-import Button from '../../ui/Button';
-import { 
-  formatContractId, 
-  calculateTotalHours, 
-  formatMDY, 
-  getLecturerDepartment 
-} from '../../../utils/lecturerContractHelpers';
+import React from "react";
+import { Clock, FileText, Eye, PenTool, FilePen } from "lucide-react";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "../../ui/Card";
+import Button from "../../ui/Button";
+import {
+  formatContractId,
+  calculateTotalHours,
+  formatMDY,
+  getLecturerDepartment,
+} from "../../../utils/lecturerContractHelpers";
 
 /**
  * PendingContractsCard Component
  * Displays contracts awaiting lecturer signature
  */
-export default function PendingContractsCard({ 
-  pendingContracts, 
-  hourlyRate, 
-  onPreview, 
-  onSign 
+export default function PendingContractsCard({
+  pendingContracts,
+  hourlyRate,
+  onPreview,
+  onSign,
+  onRedo,
 }) {
   if (!pendingContracts || pendingContracts.length === 0) {
     return null;
@@ -28,9 +35,10 @@ export default function PendingContractsCard({
   const hours = calculateTotalHours(contract);
   const startDate = contract.start_date || contract.startDate || null;
   const endDate = contract.end_date || contract.endDate || null;
-  const period = startDate && endDate 
-    ? `${formatMDY(startDate)} - ${formatMDY(endDate)}` 
-    : `Term ${contract.term} • ${contract.academic_year}`;
+  const period =
+    startDate && endDate
+      ? `${formatMDY(startDate)} - ${formatMDY(endDate)}`
+      : `Term ${contract.term} • ${contract.academic_year}`;
   const dept = getLecturerDepartment(contract);
 
   return (
@@ -58,42 +66,46 @@ export default function PendingContractsCard({
               <div>
                 <span className="text-gray-600">Period:</span> {period}
               </div>
-              <div className="truncate" title={dept || '—'}>
-                <span className="text-gray-600">Department:</span> {dept || '—'}
+              <div className="truncate" title={dept || "—"}>
+                <span className="text-gray-600">Department:</span> {dept || "—"}
               </div>
               <div>
                 <span className="text-gray-600">Hours:</span> {hours}h
               </div>
               <div>
-                <span className="text-gray-600">Rate:</span>{' '}
-                {hourlyRate != null ? `$${hourlyRate}/hr` : '—'}
+                <span className="text-gray-600">Rate:</span>{" "}
+                {hourlyRate != null ? `$${hourlyRate}/hr` : "—"}
               </div>
               <div className="sm:col-span-2">
-                <span className="text-gray-600">Total:</span>{' '}
-                {hourlyRate != null 
-                  ? `$${Math.round(hourlyRate * hours).toLocaleString()}` 
-                  : '—'}
+                <span className="text-gray-600">Total:</span>{" "}
+                {hourlyRate != null
+                  ? `$${Math.round(hourlyRate * hours).toLocaleString()}`
+                  : "—"}
               </div>
             </div>
           </div>
-          
+
           {/* Right: actions */}
           <div className="flex flex-wrap gap-2">
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={() => onPreview(contract.id)} 
-              title="Preview contract" 
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onPreview(contract.id)}
+              title="Preview contract"
               className="border-amber-200"
             >
               <Eye className="w-4 h-4" /> Review
             </Button>
-            <Button 
-              size="sm" 
-              onClick={() => onSign(contract)} 
+            <Button size="sm" onClick={() => onRedo(contract)} className="cursor-pointer w-full sm:w-auto">
+              <FilePen className="w-4 h-4 mr-1.5" />
+              Request Re-do
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => onSign(contract)}
               className="bg-amber-600 hover:bg-amber-700"
             >
-              <PenTool className="w-4 h-4" /> Sign Now
+              <PenTool className="w-4 h-4 mr-1.5" /> Sign Now
             </Button>
           </div>
         </div>

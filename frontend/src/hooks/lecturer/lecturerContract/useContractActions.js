@@ -15,6 +15,7 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
   const [selectedContract, setSelectedContract] = useState(null);
   const [viewOpen, setViewOpen] = useState(false);
   const [signOpen, setSignOpen] = useState(false);
+  const [redoOpen, setRedoOpen] = useState(false);
 
   /**
    * Preview contract PDF in new tab
@@ -88,6 +89,11 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
     setSignOpen(true);
   };
 
+  const openRedoDialog = (contract) => {
+    setSelectedContract(contract);
+    setRedoOpen(true);
+  }
+
   return {
     uploading,
     selectedContract,
@@ -96,10 +102,13 @@ export const useContractActions = (lecturerProfile, authUser, fetchContracts) =>
     setViewOpen,
     signOpen,
     setSignOpen,
+    redoOpen,
+    setRedoOpen,
     previewPdf,
     downloadPdf,
     uploadSignature,
     openViewDialog,
     openSignDialog,
+    openRedoDialog,
   };
 };
