@@ -1,9 +1,10 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 
 import { BookOpen, CheckCircle, FileText, Info } from 'lucide-react';
 
 import { useAuthStore } from '../../store/useAuthStore';
 import { useAdvisorDashboard } from '../../hooks/advisor/dashboard/useAdvisorDashboard';
+import { useNotifications } from '../../hooks/useNotifications';
 
 import { DashboardHeader } from '../../components/lecturer/dashboard/DashboardHeader';
 import { RealTimeBar } from '../../components/lecturer/dashboard/RealTimeBar';
@@ -16,8 +17,15 @@ export default function AdvisorDashboard() {
 
   // Kept for DashboardHeader signature compatibility
   const [selectedTimeRange, setSelectedTimeRange] = useState('30d');
-  const [showNotifications, setShowNotifications] = useState(false);
-  const notifContainerRef = useRef(null);
+
+  const {
+    notifications,
+    unreadCount,
+    lastViewedAt,
+    showNotifications,
+    setShowNotifications,
+    notifContainerRef,
+  } = useNotifications();
 
   const { isLoading, isRefreshing, lastUpdated, realTimeStats, dashboardData, recentActivities, fetchDashboardData } =
     useAdvisorDashboard();
@@ -32,9 +40,9 @@ export default function AdvisorDashboard() {
           setSelectedTimeRange={setSelectedTimeRange}
           showNotifications={showNotifications}
           setShowNotifications={setShowNotifications}
-          notifications={[]}
-          unreadCount={0}
-          lastViewedAt={null}
+          notifications={notifications}
+          unreadCount={unreadCount}
+          lastViewedAt={lastViewedAt}
           notifContainerRef={notifContainerRef}
           fetchDashboardData={fetchDashboardData}
           isRefreshing={isRefreshing}
@@ -42,7 +50,7 @@ export default function AdvisorDashboard() {
           dashboardTitle='Advisor Dashboard'
           dashboardSubtitle="Here's a snapshot of your advisor contracts."
           showTimeRange={false}
-          showNotificationsControl={false}
+          showNotificationsControl={true}
         />
 
         <RealTimeBar realTimeStats={realTimeStats} />
