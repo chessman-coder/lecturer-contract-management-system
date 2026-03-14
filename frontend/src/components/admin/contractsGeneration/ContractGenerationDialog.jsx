@@ -137,7 +137,7 @@ export default function ContractGenerationDialog({
         start_date: dlgStartDate,
         end_date: dlgEndDate,
         items: dlgItems,
-        hourly_rate: dlgHourlyRate ? parseFloat(dlgHourlyRate) : null,
+        hourly_rate: (() => { const n = parseFloat(String(dlgHourlyRate || '').trim()); return Number.isFinite(n) ? n : null; })(),
       });
       
       // Reset form
