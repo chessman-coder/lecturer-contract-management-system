@@ -9,6 +9,79 @@ import { findOrCreateResearchFields } from './researchField.controller.js';
 import { findOrCreateUniversities } from './university.controller.js';
 import { findOrCreateMajors } from './major.controller.js';
 
+const sanitizeDisplayName = (name) => {
+  const base = path.basename(String(name || '')).trim();
+  if (!base) return 'syllabus.pdf';
+  const cleaned = base
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ')
+    .slice(0, 120)
+    .trim();
+  return cleaned || 'syllabus.pdf';
+};
+
+const syllabusManifestPath = (folderSlug) =>
+  path.join(process.cwd(), 'uploads', 'lecturers', folderSlug, 'syllabus', '_manifest.json');
+
+const readSyllabusManifest = async (folderSlug) => {
+  if (!folderSlug) return { files: [] };
+  const manifestPath = syllabusManifestPath(folderSlug);
+  try {
+    const txt = await fs.promises.readFile(manifestPath, 'utf8');
+    const parsed = JSON.parse(txt);
+    if (!parsed || !Array.isArray(parsed.files)) return { files: [] };
+    return { files: parsed.files };
+  } catch {
+    return { files: [] };
+  }
+};
+
+const listSyllabusFilesWithNames = async (folderSlug, legacySinglePath = null) => {
+  const legacy = legacySinglePath ? String(legacySinglePath).replace(/\\/g, '/').replace(/^\//, '') : null;
+  if (!folderSlug) {
+    return {
+      files: legacy ? [legacy] : [],
+      file_names: legacy ? { [legacy]: sanitizeDisplayName(legacy) } : {},
+    };
+  }
+
+  const dir = path.join(process.cwd(), 'uploads', 'lecturers', folderSlug, 'syllabus');
+  const manifest = await readSyllabusManifest(folderSlug);
+  const originalByStored = new Map();
+  for (const f of manifest.files) {
+    if (!f || !f.stored) continue;
+    originalByStored.set(String(f.stored), sanitizeDisplayName(f.original || f.stored));
+  }
+
+  try {
+    const names = await fs.promises.readdir(dir);
+    const pdfs = names
+      .filter((n) => /\.pdf$/i.test(String(n)))
+      .map((n) => String(n))
+      .sort((a, b) => String(b).localeCompare(String(a)));
+
+    const files = pdfs.map((n) =>
+      path.join('uploads', 'lecturers', folderSlug, 'syllabus', n).replace(/\\/g, '/')
+    );
+    const file_names = {};
+    for (let i = 0; i < pdfs.length; i += 1) {
+      const stored = pdfs[i];
+      const p = files[i];
+      file_names[p] = originalByStored.get(stored) || sanitizeDisplayName(stored);
+    }
+
+    if (!files.length && legacy) {
+      return { files: [legacy], file_names: { [legacy]: sanitizeDisplayName(legacy) } };
+    }
+    return { files, file_names };
+  } catch {
+    return {
+      files: legacy ? [legacy] : [],
+      file_names: legacy ? { [legacy]: sanitizeDisplayName(legacy) } : {},
+    };
+  }
+};
+
 /**
  * GET /api/lecturers
  * Returns lecturers sourced directly from Lecturer_Profiles + joined User.
@@ -524,6 +597,18 @@ export const getLecturerDetail = async (req, res) => {
       syllabusFilePath: profile.course_syllabus
         ? String(profile.course_syllabus).replace(/\\/g, '/').replace(/^\//, '')
         : null,
+      ...(await (async () => {
+        const { files, file_names } = await listSyllabusFilesWithNames(
+          profile.storage_folder,
+          profile.course_syllabus
+            ? String(profile.course_syllabus).replace(/\\/g, '/').replace(/^\//, '')
+            : null
+        );
+        return {
+          course_syllabus_files: files,
+          course_syllabus_file_names: file_names,
+        };
+      })()),
       // Bank / payroll fields (read from Lecturer_Profiles)
       bank_name: profile.bank_name || null,
       account_name: profile.account_name || null,

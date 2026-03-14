@@ -24,6 +24,46 @@ export default function LecturerProfileDialog({
 }) {
   const safeLecturer = lecturer ?? {};
 
+  const normalizePathKey = (p) => String(p || '').replace(/\\/g, '/').replace(/^\//, '');
+  const friendlyStoredName = (p) => {
+    const base = String(p).split('/').pop() || '';
+    const m = base.match(/^syllabus_\d+_(\d+)\.pdf$/i);
+    if (m) return `Syllabus ${m[1]}.pdf`;
+    const m2 = base.match(/^syllabus_\d+\.pdf$/i);
+    if (m2) return 'Syllabus.pdf';
+    return base || 'syllabus.pdf';
+  };
+  const getFileNameFromPath = (p) => {
+    const base = String(p || '').replace(/\\/g, '/').split('/').pop() || '';
+    return base || 'file.pdf';
+  };
+  const courseSyllabusFilesRaw = Array.isArray(safeLecturer.courseSyllabusFiles)
+    ? safeLecturer.courseSyllabusFiles
+    : Array.isArray(safeLecturer.course_syllabus_files)
+      ? safeLecturer.course_syllabus_files
+      : [];
+  const courseSyllabusFiles = Array.from(
+    new Set(
+      (courseSyllabusFilesRaw || [])
+        .filter(Boolean)
+        .map((p) => normalizePathKey(p))
+    )
+  ).sort((a, b) => {
+    const an = String(a).split('/').pop() || '';
+    const bn = String(b).split('/').pop() || '';
+    return bn.localeCompare(an);
+  });
+  const syllabusNamesMapRaw =
+    (safeLecturer.courseSyllabusFileNames && typeof safeLecturer.courseSyllabusFileNames === 'object')
+      ? safeLecturer.courseSyllabusFileNames
+      : (safeLecturer.course_syllabus_file_names && typeof safeLecturer.course_syllabus_file_names === 'object')
+        ? safeLecturer.course_syllabus_file_names
+        : {};
+  const syllabusNamesMap = Object.fromEntries(
+    Object.entries(syllabusNamesMapRaw).map(([k, v]) => [normalizePathKey(k), String(v)])
+  );
+  const syllabusNameOf = (p) => syllabusNamesMap[normalizePathKey(p)] || friendlyStoredName(p);
+
   const roleTokens = (() => {
     const toToken = (r) => {
       if (r === null || r === undefined) return '';
@@ -427,32 +467,20 @@ export default function LecturerProfileDialog({
                             <FileText className='h-8 w-8 text-red-600 mr-3'/>
                             <div>
                               <p className='font-medium'>Current CV</p>
-                              <p className='text-sm text-gray-600'>PDF Document</p>
+                              {lecturer.cvFilePath ? (
+                                <a
+                                  href={fileUrl(lecturer.cvFilePath)}
+                                  target='_blank'
+                                  rel='noreferrer'
+                                  className='text-sm text-indigo-700 hover:text-indigo-800 truncate block max-w-[28rem]'
+                                  title={getFileNameFromPath(lecturer.cvFilePath)}
+                                >
+                                  {getFileNameFromPath(lecturer.cvFilePath)}
+                                </a>
+                              ) : (
+                                <p className='text-sm text-gray-600'>PDF Document</p>
+                              )}
                             </div>
-                          </div>
-                          <div className='flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end'>
-                            {lecturer.cvFilePath && (() => {
-                              const url = fileUrl(lecturer.cvFilePath);
-                              return (
-                                <>
-                                  <a 
-                                    href={url} 
-                                    target='_blank' 
-                                    rel='noreferrer' 
-                                    className='inline-flex items-center px-3 py-1.5 text-xs rounded border hover:bg-gray-50 whitespace-nowrap'
-                                  >
-                                    <Eye className='w-4 h-4 mr-1'/> Preview
-                                  </a>
-                                  <a 
-                                    href={url} 
-                                    download 
-                                    className='inline-flex items-center px-3 py-1.5 text-xs rounded border hover:bg-gray-50 whitespace-nowrap'
-                                  >
-                                    <Download className='w-4 h-4 mr-1'/> Download
-                                  </a>
-                                </>
-                              );
-                            })()}
                           </div>
                         </div>
                       ) : (
@@ -468,38 +496,36 @@ export default function LecturerProfileDialog({
                   <div>
                     <Label className='text-base font-medium'>Course Syllabus</Label>
                     <div className='mt-2 space-y-4'>
-                      {lecturer.syllabusUploaded ? (
+                      {(lecturer.syllabusUploaded || courseSyllabusFiles.length || lecturer.syllabusFilePath) ? (
                         <div className='flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-4 border rounded-lg'>
                           <div className='flex items-center flex-1 min-w-0'>
                             <FileText className='h-8 w-8 text-blue-600 mr-3'/>
                             <div>
-                              <p className='font-medium'>Current Syllabus</p>
-                              <p className='text-sm text-gray-600'>PDF Document</p>
+                              <p className='font-medium'>Syllabus Files</p>
+                              <p className='text-sm text-gray-600'>Click a file to open</p>
                             </div>
                           </div>
-                          <div className='flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end'>
-                            {lecturer.syllabusFilePath && (() => {
-                              const url = fileUrl(lecturer.syllabusFilePath);
-                              return (
-                                <>
-                                  <a 
-                                    href={url} 
-                                    target='_blank' 
-                                    rel='noreferrer' 
-                                    className='inline-flex items-center px-3 py-1.5 text-xs rounded border hover:bg-gray-50 whitespace-nowrap'
-                                  >
-                                    <Eye className='w-4 h-4 mr-1'/> Preview
-                                  </a>
-                                  <a 
-                                    href={url} 
-                                    download 
-                                    className='inline-flex items-center px-3 py-1.5 text-xs rounded border hover:bg-gray-50 whitespace-nowrap'
-                                  >
-                                    <Download className='w-4 h-4 mr-1'/> Download
-                                  </a>
-                                </>
-                              );
-                            })()}
+                          <div className='w-full sm:w-auto sm:min-w-[18rem]'>
+                            <div className='max-h-28 overflow-auto space-y-1'>
+                              {(courseSyllabusFiles.length ? courseSyllabusFiles : (lecturer.syllabusFilePath ? [normalizePathKey(lecturer.syllabusFilePath)] : []))
+                                .map((p) => {
+                                  const name = syllabusNameOf(p);
+                                  const url = fileUrl(p);
+                                  return (
+                                    <a
+                                      key={p}
+                                      href={url}
+                                      target='_blank'
+                                      rel='noreferrer'
+                                      title={name}
+                                      className='flex items-center gap-2 px-3 py-2 text-xs rounded border bg-white hover:bg-gray-50 truncate'
+                                    >
+                                      <span className='inline-block w-1.5 h-1.5 rounded-full bg-indigo-300 flex-shrink-0' />
+                                      <span className='truncate'>{name}</span>
+                                    </a>
+                                  );
+                                })}
+                            </div>
                           </div>
                         </div>
                       ) : (

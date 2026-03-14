@@ -182,6 +182,14 @@ export function useLecturerDetail() {
         cvFilePath: get('cvFilePath') || get('cv_file_path') || '',
         syllabusUploaded: get('syllabusUploaded') || false,
         syllabusFilePath: get('syllabusFilePath') || get('syllabus_file_path') || '',
+        courseSyllabusFiles:
+          get('courseSyllabusFiles') ||
+          get('course_syllabus_files') ||
+          [],
+        courseSyllabusFileNames:
+          get('courseSyllabusFileNames') ||
+          get('course_syllabus_file_names') ||
+          {},
         latest_degree: get('latest_degree', '') || '',
         degree_year: get('degree_year', '') || '',
         major: get('major', '') || '',
