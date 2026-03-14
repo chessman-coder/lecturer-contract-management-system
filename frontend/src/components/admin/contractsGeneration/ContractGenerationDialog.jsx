@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/Dialog';
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
@@ -73,6 +73,28 @@ export default function ContractGenerationDialog({
   const startRef = useRef(null);
   const endRef = useRef(null);
 
+  const mappingNaturalKey = useCallback((m) => {
+    const courseId = normId(m?.course?.id);
+    const classId = normId(m?.class?.id);
+    const yearLevel = String(m?.year_level ?? '').trim();
+    const term = String(m?.term ?? '').trim();
+    const year = String(m?.academic_year ?? m?.class?.academic_year ?? '').trim();
+    return `${courseId || ''}|${classId || ''}|${yearLevel}|${term}|${year}`;
+  }, []);
+
+  const dedupeByKey = useCallback((rows, getKey) => {
+    const out = [];
+    const seen = new Set();
+    for (const r of (rows || [])) {
+      const k = getKey(r);
+      if (!k) continue;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      out.push(r);
+    }
+    return out;
+  }, []);
+
   const dlgFilteredMappings = useMemo(() => {
     const q = (dlgCourseQuery || '').toLowerCase();
     const list = (mappings || []).filter(m => {
@@ -96,8 +118,9 @@ export default function ContractGenerationDialog({
       const meta = `${m.term || ''} ${m.year_level || ''}`.toLowerCase();
       return cname.includes(q) || ccode.includes(q) || cls.includes(q) || meta.includes(q);
     });
-    return list;
-  }, [mappings, dlgCourseQuery, dlgLecturerKey, mappingUserId]);
+    // Prevent duplicated-looking rows if backend has duplicated mapping records.
+    return dedupeByKey(list, mappingNaturalKey);
+  }, [mappings, dlgCourseQuery, dlgLecturerKey, mappingUserId, dedupeByKey, mappingNaturalKey]);
 
   const handleCreateLecturer = async () => {
     const errs = {};
@@ -114,7 +137,8 @@ export default function ContractGenerationDialog({
     else if (sd && ed <= sd) errs.endDate = 'End Date must be after Start Date';
     if (!dlgItems || dlgItems.length === 0) errs.description = 'Please add at least one duty';
     
-    const selectedMappings = (mappings || []).filter(m => dlgSelectedMappingIds.has(m.id));
+    const selectedMappingsRaw = (mappings || []).filter(m => dlgSelectedMappingIds.has(m.id));
+    const selectedMappings = dedupeByKey(selectedMappingsRaw, mappingNaturalKey);
     if (selectedMappings.length === 0) errs.courses = 'Please select at least one course to include in this contract.';
     
     setDlgErrors(errs);
