@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../ui/Dialog';
 import Button from '../../ui/Button';
 import Input from '../../ui/Input';
@@ -6,6 +6,7 @@ import Select, { SelectItem } from '../../ui/Select';
 import { Checkbox } from '../../ui/Checkbox';
 import { Search, Calendar, Pencil, Trash2, Plus } from 'lucide-react';
 import { getLecturerDetail } from '../../../services/lecturer.service';
+import { listAdvisors, getAdvisorDetail } from '../../../services/advisor.service';
 import { hoursFromMapping, toBool, normId } from '../../../utils/contractHelpers';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../ui/Tabs';
 
@@ -64,6 +65,10 @@ export default function ContractGenerationDialog({
   const [advEditingDutyValue, setAdvEditingDutyValue] = useState('');
   const [advJoinJudgingHours, setAdvJoinJudgingHours] = useState('');
   const [advErrors, setAdvErrors] = useState({});
+
+  const [advisorUsers, setAdvisorUsers] = useState([]);
+  const [advisorUsersLoading, setAdvisorUsersLoading] = useState(false);
+  const [advisorUsersLoadError, setAdvisorUsersLoadError] = useState('');
 
   const startRef = useRef(null);
   const endRef = useRef(null);
@@ -306,13 +311,44 @@ export default function ContractGenerationDialog({
     setAdvErrors(prev => ({ ...prev, lecturer: '' }));
     try {
       if (!resolvedUserId) throw new Error('Lecturer user id not resolved');
-      const body = await getLecturerDetail(resolvedUserId);
+      // Advisor accounts may not have lecturer role; use advisor detail endpoint.
+      const body = await getAdvisorDetail(resolvedUserId);
       const rate = body?.hourlyRateThisYear || '';
       setAdvHourlyRate(rate);
     } catch {
       setAdvHourlyRate('');
     }
   };
+
+  useEffect(() => {
+    if (!open) return;
+    if (dlgContractType !== 'ADVISOR') return;
+
+    let cancelled = false;
+
+    (async () => {
+      setAdvisorUsersLoading(true);
+      setAdvisorUsersLoadError('');
+      try {
+        // Admin UX: Advisor tab should show all advisor-role accounts that can log in.
+        const body = await listAdvisors({ page: 1, limit: 1000 });
+        const list = Array.isArray(body?.data) ? body.data : [];
+        if (!cancelled) setAdvisorUsers(list);
+      } catch (e) {
+        console.error('Failed to load advisors:', e);
+        if (!cancelled) {
+          setAdvisorUsers([]);
+          setAdvisorUsersLoadError('Failed to load advisors.');
+        }
+      } finally {
+        if (!cancelled) setAdvisorUsersLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, dlgContractType]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -659,13 +695,19 @@ export default function ContractGenerationDialog({
                   onValueChange={handleAdvisorLecturerChange}
                   placeholder="Enter advisor name"
                 >
-                  {lecturers.map(l => (
-                    <SelectItem key={l.id} value={l.id}>
-                      {l.name || l.full_name_english || l.full_name_khmer}
+                  {(advisorUsers.length ? advisorUsers : lecturers).map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {u.name || u.full_name_english || u.full_name_khmer || u.display_name || u.email}
                     </SelectItem>
                   ))}
                 </Select>
-                {!lecturers.length && (
+                {advisorUsersLoading && (
+                  <p className="text-xs text-gray-500">Loading advisors…</p>
+                )}
+                {!!advisorUsersLoadError && (
+                  <p className="text-xs text-red-600">{advisorUsersLoadError}</p>
+                )}
+                {!advisorUsersLoading && !advisorUsers.length && !lecturers.length && (
                   <p className="text-xs text-amber-600">
                     No lecturers found. Try selecting another academic year or ensure Accepted course mappings exist.
                   </p>

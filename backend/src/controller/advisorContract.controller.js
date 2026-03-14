@@ -84,6 +84,20 @@ function embedLogo(html) {
   return html.replace(/src=(['"])cadt_logo\.png\1/g, `src="${dataUri}"`);
 }
 
+// Convert an image file to an <img> tag HTML or empty string if missing
+function signatureTag(filePath) {
+  try {
+    if (!filePath) return '';
+    if (!fs.existsSync(filePath)) return '';
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+    const base64 = fs.readFileSync(filePath, 'base64');
+    return `<img src="data:${mime};base64,${base64}" style="max-height:70px; max-width:220px;" />`;
+  } catch {
+    return '';
+  }
+}
+
 function ordinalSuffix(n) {
   const v = n % 100;
   if (v >= 11 && v <= 13) return 'th';
@@ -171,7 +185,12 @@ export const uploadAdvisorSignature = multer({ storage: advisorSignatureStorage 
 export async function uploadAdvisorContractSignature(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
-    const who = String(req.body.who || 'advisor').toLowerCase();
+    const whoRaw = String(req.body.who || 'advisor').toLowerCase();
+    // Advisors are lecturers in this system; accept 'lecturer' as an alias.
+    const who = whoRaw === 'lecturer' ? 'advisor' : whoRaw;
+    if (who !== 'advisor' && who !== 'management') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: "Invalid 'who' (must be advisor|management)" });
+    }
 
     const found = await AdvisorContract.findByPk(id, {
       include: [
@@ -232,7 +251,7 @@ export async function uploadAdvisorContractSignature(req, res) {
     const now = new Date();
 
     if (who === 'advisor') {
-      const nextStatus = found.management_signed_at ? 'COMPLETED' : 'DRAFT';
+      const nextStatus = found.management_signed_at ? 'COMPLETED' : 'WAITING_MANAGEMENT';
       await found.update({
         advisor_signature_path: filePath,
         advisor_signed_at: now,
@@ -713,8 +732,8 @@ export async function generateAdvisorPdf(req, res) {
       .replaceAll('{academic_year}', escapeHtml(academicYear))
       .replaceAll('{program_label_en}', escapeHtml(programLabelEn))
       .replaceAll('{department_name}', escapeHtml(departmentName))
-      .replaceAll('{management_signature_path}', escapeHtml(found.management_signature_path || ''))
-      .replaceAll('{advisor_signature_path}', escapeHtml(found.advisor_signature_path || ''))
+      .replaceAll('{management_signature_path}', signatureTag(found.management_signature_path))
+      .replaceAll('{advisor_signature_path}', signatureTag(found.advisor_signature_path))
       .replaceAll('{students_rows_en}', studentsRowsEn)
       .replaceAll('{students_rows_kh}', studentsRowsKh)
       .replaceAll('{duties_rows_en}', dutiesRowsEn)

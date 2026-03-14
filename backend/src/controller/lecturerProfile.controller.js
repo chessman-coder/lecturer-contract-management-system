@@ -5,6 +5,7 @@ import { LecturerProfile, User, Department } from '../model/index.js';
 import Candidate from '../model/candidate.model.js';
 import Course from '../model/course.model.js';
 import LecturerCourse from '../model/lecturerCourse.model.js';
+import { Op } from 'sequelize';
 
 const LECTURER_PROFILE_EDITABLE_FIELDS = [
   'title',
@@ -88,15 +89,46 @@ export const getMyLecturerProfile = async (req, res) => {
     // Lookup hourly rate from Candidate using direct candidate_id reference
     let hourlyRateThisYear = null;
     try {
-      if (profile.candidate_id) {
-        const cand = await Candidate.findByPk(profile.candidate_id, {
-          attributes: ['id', 'fullName', 'email', 'hourlyRate'],
-        });
+      const attrs = ['id', 'fullName', 'email', 'hourlyRate'];
 
-        if (cand && cand.hourlyRate != null) {
-          hourlyRateThisYear = String(cand.hourlyRate);
+      let cand = null;
+
+      if (profile.candidate_id) {
+        cand = await Candidate.findByPk(profile.candidate_id, { attributes: attrs });
+      }
+
+      // Legacy-safe fallback: match by email if candidate_id not populated.
+      if (!cand) {
+        const emailCandidates = [user?.email, profile?.personal_email]
+          .map((s) => (s ? String(s).trim().toLowerCase() : ''))
+          .filter(Boolean);
+
+        if (emailCandidates.length) {
+          cand = await Candidate.findOne({
+            where: { email: { [Op.in]: emailCandidates } },
+            attributes: attrs,
+          });
         }
       }
+
+      // Lightweight fallback: exact name match (avoid full-table scans).
+      if (!cand) {
+        const titleRegex = /^(mr\.?|ms\.?|mrs\.?|dr\.?|prof\.?|professor|miss)\s+/i;
+        const fullEn = profile?.full_name_english ? String(profile.full_name_english).trim() : '';
+        const fullKh = profile?.full_name_khmer ? String(profile.full_name_khmer).trim() : '';
+        const cleanedEn = fullEn ? fullEn.replace(titleRegex, '').replace(/\s+/g, ' ').trim() : '';
+
+        const names = [fullEn, cleanedEn, fullKh].filter(Boolean);
+
+        if (names.length) {
+          cand = await Candidate.findOne({
+            where: { fullName: { [Op.in]: names } },
+            attributes: attrs,
+          });
+        }
+      }
+
+      if (cand && cand.hourlyRate != null) hourlyRateThisYear = String(cand.hourlyRate);
     } catch (err) {
       console.error('[getMyLecturerProfile] candidate lookup failed:', err.message);
     }

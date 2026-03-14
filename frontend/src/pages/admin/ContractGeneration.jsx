@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom';
 import Button from '../../components/ui/Button';
 import { Plus, FileText, Loader2, Eye, Download, Trash2, GraduationCap } from 'lucide-react';
@@ -36,7 +36,7 @@ export default function ContractGeneration() {
   const [confirmDelete, setConfirmDelete] = useState({ open: false, id: null, label: '' });
   const [advisorContracts, setAdvisorContracts] = useState([]);
   const [advisorTotal, setAdvisorTotal] = useState(0);
-  const [advisorLoading, setAdvisorLoading] = useState(false);
+  const [_advisorLoading, setAdvisorLoading] = useState(false);
   const [editRedo, setEditRedo] = useState({ open: false, contract: null });
 
   useEffect(() => {
@@ -50,8 +50,12 @@ export default function ContractGeneration() {
   // Custom hooks
   const contractData = useContractData();
   const contractMappings = useContractMappings(academicYear);
+  const contractsForActions = useMemo(
+    () => [...(contractData.contracts || []), ...(advisorContracts || [])],
+    [contractData.contracts, advisorContracts]
+  );
   const contractActions = useContractActions(
-    contractData.contracts,
+    contractsForActions,
     contractData.setContracts,
     contractData.refreshContracts
   );
@@ -60,15 +64,24 @@ export default function ContractGeneration() {
   const normalizeAdvisorContract = (c) => {
     const raw = c || {};
     const status = String(raw.status || '').toUpperCase();
+    const hasAdvisorSig = !!raw?.advisor_signed_at;
+    const hasManagementSig = !!raw?.management_signed_at;
+    const derivedStatus = (() => {
+      if (status === 'REQUEST_REDO') return 'REQUEST_REDO';
+      if (status === 'COMPLETED' || (hasAdvisorSig && hasManagementSig)) return 'COMPLETED';
+      if (status === 'WAITING_MANAGEMENT' || (hasAdvisorSig && !hasManagementSig)) return 'WAITING_MANAGEMENT';
+      // Default: waiting advisor signature
+      return 'WAITING_ADVISOR';
+    })();
     return {
       ...raw,
       contract_type: 'ADVISOR',
-      // Admin UX: newly created advisor contracts show as waiting advisor
-      status: status === 'DRAFT' ? 'WAITING_ADVISOR' : status,
+      // Admin UX: normalize advisor lifecycle into the same display states as teaching contracts
+      status: derivedStatus,
     };
   };
 
-  const fetchAllAdvisorContracts = async () => {
+  const fetchAllAdvisorContracts = useCallback(async () => {
     try {
       setAdvisorLoading(true);
       const limit = 100;
@@ -76,7 +89,6 @@ export default function ContractGeneration() {
       let all = [];
       let total = 0;
       // Page through because backend caps limit at 100
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const body = await listAdvisorContracts({ page, limit });
         const rows = Array.isArray(body?.data) ? body.data : [];
@@ -95,12 +107,34 @@ export default function ContractGeneration() {
     } finally {
       setAdvisorLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchAllAdvisorContracts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep advisor statuses fresh (e.g., advisor signs -> waiting management)
+  useEffect(() => {
+    const maybeRefresh = () => {
+      try {
+        if (document.visibilityState && document.visibilityState !== 'visible') return;
+      } catch {
+        // ignore
+      }
+      fetchAllAdvisorContracts();
+    };
+
+    window.addEventListener('focus', maybeRefresh);
+    document.addEventListener('visibilitychange', maybeRefresh);
+    const interval = window.setInterval(maybeRefresh, 30000);
+
+    return () => {
+      window.removeEventListener('focus', maybeRefresh);
+      document.removeEventListener('visibilitychange', maybeRefresh);
+      window.clearInterval(interval);
+    };
+  }, [fetchAllAdvisorContracts]);
 
   // Fetch mappings for different academic years in contracts
   useEffect(() => {
