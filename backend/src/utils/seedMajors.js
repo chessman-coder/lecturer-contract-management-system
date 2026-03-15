@@ -1,5 +1,6 @@
 import Major from '../model/major.model.js';
 import { majorsData } from './majorsData.js';
+import { Op } from 'sequelize';
 
 export const seedMajors = async () => {
   try {
@@ -8,23 +9,24 @@ export const seedMajors = async () => {
     await Major.sync();
     console.log('[seedMajors] Model synced successfully');
 
-    const existingCount = await Major.count();
+    console.log('[seedMajors] Enforcing canonical majors list...');
+    const canonicalNames = majorsData.map((major) => major.name);
 
-    if (existingCount > 0) {
-      console.log(`[seedMajors] ${existingCount} majors already exist, skipping seed`);
-      return;
-    }
+    await Major.bulkCreate(
+      canonicalNames.map((name) => ({ name })),
+      {
+        ignoreDuplicates: true,
+      }
+    );
 
-    console.log('[seedMajors] Seeding majors...');
-
-    const majorsToCreate = majorsData.map((major) => ({ name: major.name }));
-
-    await Major.bulkCreate(majorsToCreate, {
-      ignoreDuplicates: true,
+    await Major.destroy({
+      where: {
+        name: { [Op.notIn]: canonicalNames },
+      },
     });
 
     const totalCount = await Major.count();
-    console.log(`[seedMajors] Successfully seeded ${totalCount} majors`);
+    console.log(`[seedMajors] Canonical majors enforced. Total majors: ${totalCount}`);
   } catch (error) {
     console.error('[seedMajors] Error seeding majors:', error.message);
     // Don't fail the entire startup if majors seeding fails

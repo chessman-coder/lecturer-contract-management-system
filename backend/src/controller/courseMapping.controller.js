@@ -5,6 +5,10 @@ import Course from '../model/course.model.js';
 import { LecturerProfile, Department } from '../model/index.js';
 import Specialization from '../model/specialization.model.js';
 import Group from '../model/group.model.js';
+import Schedule from '../model/schedule.model.js';
+import ScheduleEntry from '../model/scheduleEntry.model.js';
+import { TimeSlot } from '../model/timeSlot.model.js';
+import { availabilityToScheduleEntries } from '../utils/availabilityParser.js';
 import ExcelJS from 'exceljs';
 
 // Helper to resolve department id based on admin's department
@@ -15,6 +19,126 @@ async function resolveDeptId(req) {
   }
   return null;
 }
+
+function isAcceptedStatus(status) {
+  return (
+    String(status || '')
+      .trim()
+      .toLowerCase() === 'accepted'
+  );
+}
+
+function startDateFromAcademicYear(academicYear) {
+  const m = String(academicYear || '').match(/(\d{4})\s*-\s*(\d{4})/);
+  if (!m) return null;
+  return `${m[1]}-10-01`;
+}
+
+async function syncScheduleForCourseMapping(mappingId) {
+  const mapping = await CourseMapping.findByPk(mappingId, {
+    include: [
+      { model: Group, attributes: ['id', 'name'] },
+      { model: Course, attributes: ['id', 'course_name'] },
+    ],
+  });
+  if (!mapping) return;
+  if (!mapping.group_id) return;
+  if (!mapping.availability) return;
+  if (!isAcceptedStatus(mapping.status)) return;
+
+  const slots = await availabilityToScheduleEntries(mapping.availability, TimeSlot);
+  if (!slots.length) return;
+
+  let schedule = await Schedule.findOne({ where: { group_id: mapping.group_id } });
+  if (!schedule) {
+    const scheduleName = [
+      mapping.Group?.name || `Group ${mapping.group_id}`,
+      mapping.term || null,
+      mapping.academic_year || null,
+    ]
+      .filter(Boolean)
+      .join(' - ');
+    schedule = await Schedule.create({
+      group_id: mapping.group_id,
+      name: scheduleName || `Schedule for Group ${mapping.group_id}`,
+      notes: 'Auto-generated from accepted course mappings',
+      start_date: startDateFromAcademicYear(mapping.academic_year),
+    });
+  }
+
+  const sessionType =
+    (mapping.theory_groups || 0) > 0 && (mapping.lab_groups || 0) > 0
+      ? 'Lab + Theory'
+      : (mapping.lab_groups || 0) > 0
+        ? 'Lab'
+        : 'Theory';
+  const room =
+    mapping.theory_room_number || mapping.lab_room_number || mapping.room_number || 'TBA';
+
+  await Promise.all(
+    slots.map(async (slot) => {
+      const [entry, created] = await ScheduleEntry.findOrCreate({
+        where: {
+          schedule_id: schedule.id,
+          course_mapping_id: mapping.id,
+          day_of_week: slot.day_of_week,
+          time_slot_id: slot.time_slot_id,
+        },
+        defaults: {
+          schedule_id: schedule.id,
+          course_mapping_id: mapping.id,
+          day_of_week: slot.day_of_week,
+          time_slot_id: slot.time_slot_id,
+          room,
+          session_type: sessionType,
+        },
+      });
+
+      if (!created) {
+        await entry.update({ room, session_type: sessionType });
+      }
+    })
+  );
+}
+
+export const backfillCourseMappingSchedules = async (req, res) => {
+  try {
+    const deptId = await resolveDeptId(req);
+    const rows = await CourseMapping.findAll({
+      where: deptId ? { dept_id: deptId } : undefined,
+      attributes: ['id', 'status', 'group_id', 'availability'],
+      order: [['updated_at', 'DESC']],
+    });
+
+    let eligible = 0;
+    let synced = 0;
+    const failed = [];
+
+    for (const row of rows) {
+      const isEligible = !!row.group_id && !!row.availability && isAcceptedStatus(row.status);
+      if (!isEligible) continue;
+      eligible += 1;
+      try {
+        await syncScheduleForCourseMapping(row.id);
+        synced += 1;
+      } catch (e) {
+        failed.push({ id: row.id, error: e?.message || 'Unknown error' });
+      }
+    }
+
+    return res.json({
+      message: 'Backfill completed',
+      totalMappings: rows.length,
+      eligible,
+      synced,
+      failedCount: failed.length,
+      failed,
+    });
+  } catch (e) {
+    console.error('[backfillCourseMappingSchedules]', e);
+    return res.status(500).json({ message: 'Failed to backfill schedules', error: e.message });
+  }
+};
 
 export const listCourseMappings = async (req, res) => {
   try {
@@ -57,7 +181,15 @@ export const listCourseMappings = async (req, res) => {
       include: [
         {
           model: ClassModel,
-          attributes: ['id', 'name', 'term', 'year_level', 'academic_year', 'total_class', 'specialization_id'],
+          attributes: [
+            'id',
+            'name',
+            'term',
+            'year_level',
+            'academic_year',
+            'total_class',
+            'specialization_id',
+          ],
           include: [{ model: Specialization, attributes: ['id', 'name'], required: false }],
         },
         { model: Group, attributes: ['id', 'name', 'num_of_student', 'class_id'], required: false },
@@ -211,11 +343,7 @@ export const createCourseMapping = async (req, res) => {
     const parseIdArray = (raw) => {
       const arr = Array.isArray(raw) ? raw : [];
       return Array.from(
-        new Set(
-          arr
-            .map((x) => parseInt(String(x), 10))
-            .filter((n) => Number.isInteger(n) && n > 0)
-        )
+        new Set(arr.map((x) => parseInt(String(x), 10)).filter((n) => Number.isInteger(n) && n > 0))
       );
     };
 
@@ -227,13 +355,11 @@ export const createCourseMapping = async (req, res) => {
     const groupIdsRaw = Array.isArray(group_ids)
       ? group_ids
       : group_id !== undefined && group_id !== null && String(group_id).trim() !== ''
-      ? [group_id]
-      : [];
+        ? [group_id]
+        : [];
     const groupIdsLegacy = Array.from(
       new Set(
-        groupIdsRaw
-          .map((x) => parseInt(String(x), 10))
-          .filter((n) => Number.isInteger(n) && n > 0)
+        groupIdsRaw.map((x) => parseInt(String(x), 10)).filter((n) => Number.isInteger(n) && n > 0)
       )
     );
     if (!hasTypedGroups && groupIdsRaw.length && !groupIdsLegacy.length) {
@@ -314,7 +440,10 @@ export const createCourseMapping = async (req, res) => {
       for (const [k, v] of Object.entries(room_by_group)) {
         const gid = parseInt(String(k), 10);
         if (!Number.isInteger(gid) || gid <= 0) continue;
-        const san = String(v || '').trim().slice(0, 50).toUpperCase();
+        const san = String(v || '')
+          .trim()
+          .slice(0, 50)
+          .toUpperCase();
         if (!san) continue;
         out[String(gid)] = san;
       }
@@ -327,7 +456,10 @@ export const createCourseMapping = async (req, res) => {
       for (const [k, v] of Object.entries(raw)) {
         const gid = parseInt(String(k), 10);
         if (!Number.isInteger(gid) || gid <= 0) continue;
-        const san = String(v || '').trim().slice(0, 50).toUpperCase();
+        const san = String(v || '')
+          .trim()
+          .slice(0, 50)
+          .toUpperCase();
         if (!san) continue;
         out[String(gid)] = san;
       }
@@ -382,6 +514,11 @@ export const createCourseMapping = async (req, res) => {
         lab_hours: lbHoursIn,
         lab_groups: lbGroupsIn,
       });
+      try {
+        await syncScheduleForCourseMapping(created.id);
+      } catch (syncErr) {
+        console.warn('[createCourseMapping] auto schedule sync failed', syncErr?.message);
+      }
       return res.status(201).json({ id: created.id });
     }
 
@@ -406,10 +543,16 @@ export const createCourseMapping = async (req, res) => {
           : 'Lab (30h)';
 
         const rowTheoryRoom = inTheory
-          ? theoryRoomByGroupSan[key] || roomByGroupSan[key] || commonPayload.theory_room_number || commonPayload.room_number
+          ? theoryRoomByGroupSan[key] ||
+            roomByGroupSan[key] ||
+            commonPayload.theory_room_number ||
+            commonPayload.room_number
           : null;
         const rowLabRoom = inLab
-          ? labRoomByGroupSan[key] || roomByGroupSan[key] || commonPayload.lab_room_number || commonPayload.room_number
+          ? labRoomByGroupSan[key] ||
+            roomByGroupSan[key] ||
+            commonPayload.lab_room_number ||
+            commonPayload.room_number
           : null;
         const rowRoom = rowTheoryRoom || rowLabRoom || commonPayload.room_number;
 
@@ -429,6 +572,12 @@ export const createCourseMapping = async (req, res) => {
         });
       })
     );
+
+    try {
+      await Promise.all(createdRows.map((row) => syncScheduleForCourseMapping(row.id)));
+    } catch (syncErr) {
+      console.warn('[createCourseMapping] auto schedule sync failed', syncErr?.message);
+    }
 
     return res.status(201).json({ created: createdRows.length, ids: createdRows.map((r) => r.id) });
   } catch (e) {
@@ -455,9 +604,7 @@ export const updateCourseMapping = async (req, res) => {
     const ids = rawIds
       ? Array.from(
           new Set(
-            rawIds
-              .map((x) => parseInt(String(x), 10))
-              .filter((n) => Number.isInteger(n) && n > 0)
+            rawIds.map((x) => parseInt(String(x), 10)).filter((n) => Number.isInteger(n) && n > 0)
           )
         )
       : null;
@@ -578,7 +725,10 @@ export const updateCourseMapping = async (req, res) => {
           out[String(gid)] = null;
           continue;
         }
-        const san = String(v || '').trim().slice(0, 50).toUpperCase();
+        const san = String(v || '')
+          .trim()
+          .slice(0, 50)
+          .toUpperCase();
         out[String(gid)] = san || null;
       }
       return out;
@@ -591,7 +741,10 @@ export const updateCourseMapping = async (req, res) => {
     delete patch.theory_room_by_group;
     delete patch.lab_room_by_group;
     // Keep legacy room_number in sync when updating the new fields (best-effort)
-    if (!('room_number' in patch) && ('theory_room_number' in patch || 'lab_room_number' in patch)) {
+    if (
+      !('room_number' in patch) &&
+      ('theory_room_number' in patch || 'lab_room_number' in patch)
+    ) {
       const finalTheory =
         'theory_room_number' in patch ? patch.theory_room_number : mapping.theory_room_number;
       const finalLab = 'lab_room_number' in patch ? patch.lab_room_number : mapping.lab_room_number;
@@ -639,16 +792,27 @@ export const updateCourseMapping = async (req, res) => {
           ) {
             const finalTheory =
               'theory_room_number' in perPatch ? perPatch.theory_room_number : m.theory_room_number;
-            const finalLab = 'lab_room_number' in perPatch ? perPatch.lab_room_number : m.lab_room_number;
+            const finalLab =
+              'lab_room_number' in perPatch ? perPatch.lab_room_number : m.lab_room_number;
             perPatch.room_number = finalTheory || finalLab || null;
           }
           return m.update(perPatch);
         })
       );
+      try {
+        await Promise.all(mappings.map((m) => syncScheduleForCourseMapping(m.id)));
+      } catch (syncErr) {
+        console.warn('[updateCourseMapping] auto schedule sync failed', syncErr?.message);
+      }
       return res.json({ message: 'Updated', updated: mappings.length });
     }
 
     await Promise.all(mappings.map((m) => m.update(patch)));
+    try {
+      await Promise.all(mappings.map((m) => syncScheduleForCourseMapping(m.id)));
+    } catch (syncErr) {
+      console.warn('[updateCourseMapping] auto schedule sync failed', syncErr?.message);
+    }
     return res.json({ message: 'Updated', updated: mappings.length });
   } catch (e) {
     console.error('[updateCourseMapping]', e);

@@ -1,5 +1,32 @@
 import Major from '../model/major.model.js';
 
+const CANONICAL_MAJORS = [
+  'Software Engineering',
+  'Data Science',
+  'Digital Business',
+  'Telecom and Networking Engineering',
+  'Cyber Security',
+];
+
+const MAJOR_ALIAS_TO_CANONICAL = {
+  'software engineering': 'Software Engineering',
+  'data science': 'Data Science',
+  'digital business': 'Digital Business',
+  'digital business management': 'Digital Business',
+  'telecom and networking engineering': 'Telecom and Networking Engineering',
+  'telecommunications engineering': 'Telecom and Networking Engineering',
+  'network engineering': 'Telecom and Networking Engineering',
+  cybersecurity: 'Cyber Security',
+  'cyber security': 'Cyber Security',
+};
+
+function canonicalizeMajorName(name) {
+  const normalized = String(name || '')
+    .trim()
+    .toLowerCase();
+  return MAJOR_ALIAS_TO_CANONICAL[normalized] || null;
+}
+
 export const getMajors = async (req, res) => {
   try {
     const majors = await Major.findAll({
@@ -21,12 +48,18 @@ export const createMajor = async (req, res) => {
       return res.status(400).json({ error: 'Major name is required' });
     }
 
-    const trimmedName = name.trim();
+    const canonicalName = canonicalizeMajorName(name);
+    if (!canonicalName || !CANONICAL_MAJORS.includes(canonicalName)) {
+      return res.status(400).json({
+        error: 'Only the predefined 6 majors are allowed',
+        allowedMajors: CANONICAL_MAJORS,
+      });
+    }
 
     // Check if major already exists (case-insensitive)
     const existingMajor = await Major.findOne({
       where: {
-        name: trimmedName,
+        name: canonicalName,
       },
     });
 
@@ -34,7 +67,7 @@ export const createMajor = async (req, res) => {
       return res.status(409).json({ error: 'Major already exists' });
     }
 
-    const newMajor = await Major.create({ name: trimmedName });
+    const newMajor = await Major.create({ name: canonicalName });
     res.status(201).json(newMajor);
   } catch (error) {
     console.error('Error creating major:', error);
@@ -47,26 +80,26 @@ export const findOrCreateMajors = async (majorNames) => {
 
   for (const name of majorNames) {
     if (!name || !name.trim()) continue;
-
-    const trimmedName = name.trim();
+    const canonicalName = canonicalizeMajorName(name);
+    if (!canonicalName || !CANONICAL_MAJORS.includes(canonicalName)) continue;
 
     // Try to find existing major (case-insensitive)
     let major = await Major.findOne({
       where: {
-        name: trimmedName,
+        name: canonicalName,
       },
     });
 
     // If not found, create it
     if (!major) {
       try {
-        major = await Major.create({ name: trimmedName });
+        major = await Major.create({ name: canonicalName });
       } catch (error) {
         // Handle unique constraint error in case of race condition
         if (error.name === 'SequelizeUniqueConstraintError') {
           major = await Major.findOne({
             where: {
-              name: trimmedName,
+              name: canonicalName,
             },
           });
         } else {
