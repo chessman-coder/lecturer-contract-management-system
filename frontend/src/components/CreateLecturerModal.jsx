@@ -4,6 +4,7 @@ import { X, Loader2, CheckCircle2, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { listCandidates } from '../services/candidate.service';
 import { createLecturer, createLecturerFromCandidate } from '../services/lecturer.service';
+import { createAdvisor, createAdvisorFromCandidate } from '../services/advisor.service';
 
 export default function CreateLecturerModal({ isOpen, onClose, onLecturerCreated }) {
   const [formData, setFormData] = useState({ fullName: '', email: '', position: '', title: '', gender: '' });
@@ -61,14 +62,22 @@ export default function CreateLecturerModal({ isOpen, onClose, onLecturerCreated
     const normalizePosition = (val) => {
       const s = String(val || '').trim();
       if (!s) return 'Lecturer';
+      if (/(advisor|adviser)/i.test(s) || /អ្នក\s*ប្រឹក្ស/i.test(s)) return 'Advisor';
       if (/\b(teaching\s*assistant|assistant|\bta\b)\b/i.test(s)) return 'Teaching Assistant (TA)';
       if (/(lecturer|instructor|teacher)/i.test(s)) return 'Lecturer';
       return 'Lecturer';
     };
+
+    const candidatePosition =
+      cand.positionAppliedFor ??
+      cand.positionApplied ??
+      cand.position ??
+      cand.profile?.position;
+
     setFormData(p => ({
       ...p,
       fullName: cand.fullName || p.fullName,
-      position: normalizePosition(cand.positionAppliedFor) || p.position,
+      position: normalizePosition(candidatePosition) || p.position,
       title: cand.title || p.title,
       gender: cand.gender || p.gender
     }));
@@ -101,17 +110,23 @@ export default function CreateLecturerModal({ isOpen, onClose, onLecturerCreated
     setIsSubmitting(true);
     try {
       let res;
+      const isAdvisor = String(formData.position || '').trim().toLowerCase() === 'advisor';
       if (selectedCandidateId) {
-        // Use new endpoint to create from candidate and auto mark done
-        res = await createLecturerFromCandidate(selectedCandidateId, {
+        // Create from candidate and auto mark done
+        const payload = { title: formData.title, gender: formData.gender, email: formData.email };
+        res = isAdvisor
+          ? await createAdvisorFromCandidate(selectedCandidateId, payload)
+          : await createLecturerFromCandidate(selectedCandidateId, payload);
+      } else {
+        // Manual create
+        const payload = {
+          fullName: formData.fullName,
+          email: formData.email,
+          position: formData.position,
           title: formData.title,
           gender: formData.gender,
-          email: formData.email
-        });
-      } else {
-        // Fallback: manual create
-        const payload = { fullName: formData.fullName, email: formData.email, position: formData.position, title: formData.title, gender: formData.gender };
-        res = await createLecturer(payload);
+        };
+        res = isAdvisor ? await createAdvisor(payload) : await createLecturer(payload);
       }
       setSuccessData(res);
       onLecturerCreated(res);

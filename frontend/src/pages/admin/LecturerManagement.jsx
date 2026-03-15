@@ -5,6 +5,7 @@ import CreateLecturerModal from '../../components/CreateLecturerModal';
 import AssignCoursesDialog from '../../components/AssignCoursesDialog';
 import toast from 'react-hot-toast';
 import { getLecturerDetail } from '../../services/lecturer.service';
+import { getAdvisorDetail } from '../../services/advisor.service';
 
 // Custom Hooks
 import { useLecturers } from '../../hooks/admin/lecturerManagement/useLecturers';
@@ -15,10 +16,8 @@ import { useMenusAndPopovers, useOnboardingListener } from '../../hooks/admin/le
 
 // Components
 import LecturerHeader from '../../components/admin/lecturerManagement/LecturerHeader';
-import LecturerTabs from '../../components/admin/lecturerManagement/LecturerTabs';
 import LecturerSearch from '../../components/admin/lecturerManagement/LecturerSearch';
 import LecturerTable from '../../components/admin/lecturerManagement/LecturerTable';
-import SessionCreatedList from '../../components/admin/lecturerManagement/SessionCreatedList';
 import LecturerActionMenu from '../../components/admin/lecturerManagement/LecturerActionMenu';
 import CoursesPopover from '../../components/admin/lecturerManagement/CoursesPopover';
 import DeleteLecturerModal from '../../components/admin/lecturerManagement/DeleteLecturerModal';
@@ -27,8 +26,6 @@ import LecturerProfileDialog from '../../components/admin/lecturerManagement/Lec
 
 export default function LecturerManagement() {
   // View state
-  const [activeView, setActiveView] = useState('list');
-  const [createdLecturers, setCreatedLecturers] = useState([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
   // Custom hooks
@@ -36,6 +33,7 @@ export default function LecturerManagement() {
     lecturers,
     setLecturers,
     isLoading,
+    isUpdating,
     searchQuery,
     setSearchQuery,
     page,
@@ -81,6 +79,11 @@ export default function LecturerManagement() {
     cancelAssignment
   } = useCourseAssignment(setLecturers);
 
+  const handleSaveAssignment = async () => {
+    const ok = await saveAssignment();
+    if (ok) refreshLecturers();
+  };
+
   const {
     openMenuId,
     menuCoords,
@@ -115,12 +118,14 @@ export default function LecturerManagement() {
       email: lec.email,
       status: 'inactive',
       lastLogin: 'Never',
-      role: 'lecturer',
+      role: lec.role || lec.user?.role || 'lecturer',
+      roles: Array.isArray(lec.roles)
+        ? lec.roles
+        : [lec.role || lec.user?.role || 'lecturer'],
       position: lec.profile?.position || 'Lecturer',
       tempPassword: lec.tempPassword
     };
     setLecturers(prev => [normalized, ...prev]);
-    setCreatedLecturers(prev => [normalized, ...prev]);
   };
 
   // Handle menu actions
@@ -137,7 +142,29 @@ export default function LecturerManagement() {
   const handleAssignCoursesClick = async (lecturer) => {
     closeMenu();
     try {
-      const detail = await getLecturerDetail(lecturer.id);
+      const roleTokens = (() => {
+        const toToken = (r) => {
+          if (r === null || r === undefined) return '';
+          if (typeof r === 'string' || typeof r === 'number') return String(r);
+          if (typeof r === 'object') return r.role ?? r.name ?? r.code ?? r.type ?? r.value ?? '';
+          return String(r);
+        };
+        const rawValues = [lecturer?.role, lecturer?.roles, lecturer?.user?.role, lecturer?.user?.roles];
+        const flattened = [];
+        for (const v of rawValues) {
+          if (!v) continue;
+          if (Array.isArray(v)) for (const item of v) flattened.push(toToken(item));
+          else flattened.push(toToken(v));
+        }
+        return flattened
+          .flatMap((s) => String(s ?? '').split(','))
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+      })();
+      const hasAdvisorRole = roleTokens.some((t) => t === 'advisor' || t.includes('advisor'));
+      const hasLecturerRole = roleTokens.some((t) => t === 'lecturer' || t === 'lecture' || t.includes('lectur'));
+      const isAdvisor = hasAdvisorRole && !hasLecturerRole;
+      const detail = await (isAdvisor ? getAdvisorDetail(lecturer.id) : getLecturerDetail(lecturer.id));
       await openAssignment(lecturer, detail);
     } catch (e) {
       console.error('Failed to open assignment', e);
@@ -157,7 +184,34 @@ export default function LecturerManagement() {
 
   const handleSaveProfile = async () => {
     const success = await saveProfile(selectedLecturer, async (id) => {
-      const raw = await getLecturerDetail(id);
+      const roleTokens = (() => {
+        const toToken = (r) => {
+          if (r === null || r === undefined) return '';
+          if (typeof r === 'string' || typeof r === 'number') return String(r);
+          if (typeof r === 'object') return r.role ?? r.name ?? r.code ?? r.type ?? r.value ?? '';
+          return String(r);
+        };
+        const rawValues = [
+          selectedLecturer?.role,
+          selectedLecturer?.roles,
+          selectedLecturer?.user?.role,
+          selectedLecturer?.user?.roles
+        ];
+        const flattened = [];
+        for (const v of rawValues) {
+          if (!v) continue;
+          if (Array.isArray(v)) for (const item of v) flattened.push(toToken(item));
+          else flattened.push(toToken(v));
+        }
+        return flattened
+          .flatMap((s) => String(s ?? '').split(','))
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+      })();
+      const hasAdvisorRole = roleTokens.some((t) => t === 'advisor' || t.includes('advisor'));
+      const hasLecturerRole = roleTokens.some((t) => t === 'lecturer' || t === 'lecture' || t.includes('lectur'));
+      const isAdvisor = hasAdvisorRole && !hasLecturerRole;
+      const raw = await (isAdvisor ? getAdvisorDetail(id) : getLecturerDetail(id));
       const get = (k, alt) => raw[k] ?? raw.data?.[k] ?? raw.profile?.[k] ?? alt;
       setSelectedLecturer(p => ({
         ...p,
@@ -172,7 +226,7 @@ export default function LecturerManagement() {
   };
 
   const handlePayrollUploadWrapper = async (file) => {
-    const newPath = await handlePayrollUpload(selectedLecturer.id, file, (path) => {
+    await handlePayrollUpload(selectedLecturer, file, (path) => {
       setSelectedLecturer(p => ({
         ...p,
         payrollFilePath: path || p.payrollFilePath,
@@ -183,32 +237,28 @@ export default function LecturerManagement() {
 
   return (
     <div className='p-4 md:p-6 lg:p-8 space-y-6 bg-gray-50 min-h-screen'>
-      <div className='flex flex-col gap-4'>
-        <LecturerHeader />
-        <LecturerTabs activeView={activeView} setActiveView={setActiveView} />
+      <div className='bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden'>
+        <div className='p-6 sm:p-8'>
+          <LecturerHeader onOpenCreateModal={() => setIsCreateModalOpen(true)} />
+        </div>
       </div>
 
-      {activeView === 'list' && <LecturerSearch searchQuery={searchQuery} setSearchQuery={setSearchQuery} />}
+      <LecturerSearch
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+      />
 
-      {activeView === 'add' && (
-        <SessionCreatedList 
-          createdLecturers={createdLecturers} 
-          onOpenCreateModal={() => setIsCreateModalOpen(true)} 
-        />
-      )}
-
-      {activeView === 'list' && (
-        <LecturerTable
-          lecturers={lecturers}
-          isLoading={isLoading}
-          totalLecturers={totalLecturers}
-          page={page}
-          setPage={setPage}
-          totalPages={totalPages}
-          onOpenMenu={openMenu}
-          onOpenCoursesPopover={openCoursesPopover}
-        />
-      )}
+      <LecturerTable
+        lecturers={lecturers}
+        isLoading={isLoading}
+        isUpdating={isUpdating}
+        totalLecturers={totalLecturers}
+        page={page}
+        setPage={setPage}
+        totalPages={totalPages}
+        onOpenMenu={openMenu}
+        onOpenCoursesPopover={openCoursesPopover}
+      />
 
       <CreateLecturerModal
         isOpen={isCreateModalOpen}
@@ -229,12 +279,13 @@ export default function LecturerManagement() {
         fileUrl={fileUrl}
       />
 
-      {coursesPopover && (
+      {coursesPopover && createPortal(
         <CoursesPopover
           courses={coursesPopover.items}
           coords={{ x: coursesPopover.x, y: coursesPopover.y }}
           onClose={closeCoursesPopover}
-        />
+        />,
+        document.body
       )}
 
       <DeleteLecturerModal
@@ -269,7 +320,7 @@ export default function LecturerManagement() {
         availableCourses={coursesCatalog}
         selectedCourses={selectedCourses}
         onToggleCourse={toggleCourseSelection}
-        onSave={saveAssignment}
+        onSave={handleSaveAssignment}
         onCancel={cancelAssignment}
         className={assigning?.name}
       />

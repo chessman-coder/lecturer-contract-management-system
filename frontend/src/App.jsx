@@ -20,7 +20,11 @@ const LecturerDashboardLayout = lazy(() => import('./pages/LecturerDashboardLayo
 const LecturerDashboard = lazy(() => import('./pages/lecturer/LecturerDashboard.jsx'));
 const LecturerProfile = lazy(() => import('./pages/lecturer/LecturerProfile.jsx'));
 const LecturerContracts = lazy(() => import('./pages/lecturer/LecturerContracts.jsx'));
+const LecturerSchedule = lazy(() => import('./pages/lecturer/LecturerSchedule.jsx'));
 const Onboarding = lazy(() => import('./pages/lecturer/Onboarding.jsx'));
+
+const AdvisorDashboard = lazy(() => import('./pages/advisor/AdvisorDashboard.jsx'));
+const AdvisorProfile = lazy(() => import('./pages/advisor/AdvisorProfile.jsx'));
 
 const ManagementDashboardLayout = lazy(() => import('./pages/ManagementDashboard.jsx'));
 const ManagementHome = lazy(() => import('./pages/management/ManagementHome.jsx'));
@@ -29,11 +33,15 @@ const ManagementContracts = lazy(() => import('./pages/management/ManagementCont
 
 const SuperAdminDashboard = lazy(() => import('./pages/SuperAdminDashboard.jsx'));
 const UserManagement = lazy(() => import('./pages/UserManagement.jsx'));
+const SuperAdminProfile = lazy(() => import('./pages/superadmin/SuperAdminProfile.jsx'));
 const LoginForm = lazy(() => import('./components/LoginForm.jsx'));
+const ForgotPasswordPage = lazy(() => import('./pages/ForgotPasswordPage.jsx'));
+const ResetPasswordPage = lazy(() => import('./pages/ResetPasswordPage.jsx'));
 
 
 function App() {
-  const { authUser, checkAuth, isCheckingAuth } = useAuthStore();
+  const authUser = useAuthStore((s) => s.authUser);
+  const checkAuth = useAuthStore((s) => s.checkAuth);
 
   useEffect(() => {
     checkAuth();
@@ -43,13 +51,23 @@ function App() {
 
   return (
     <>
-      <Suspense fallback={<div className="flex justify-center items-center h-screen"><Loader className="size-8 animate-spin" /></div>}>
-      <Routes>
-        {/* Default to login */}
-        <Route path="/" element={<Navigate to="/login" replace />} />
+      <Suspense
+        fallback={
+          <div className="flex justify-center items-center h-screen">
+            <Loader className="size-8 animate-spin" />
+          </div>
+        }
+      >
+        <Routes>
+          {/* Default to login */}
+          <Route path="/" element={<Navigate to="/login" replace />} />
 
-        {/* Public login */}
-        <Route path="/login" element={<LoginForm />} />
+          {/* Public login */}
+          <Route path="/login" element={<LoginForm />} />
+
+          {/* Public forgot / reset password */}
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* Superadmin */}
         <Route
@@ -69,24 +87,33 @@ function App() {
           }
         />
 
-        {/* Admin + Nested routes */}
         <Route
-          path="/admin"
+          path="/superadmin/profile"
           element={
-            <RequireRole allowed={["admin"]}>
-              <AdminDashboardLayout />
+            <RequireRole allowed={["superadmin"]}>
+              <SuperAdminProfile />
             </RequireRole>
           }
-        >
-          <Route index element={<AdminHome />} />
-          <Route path="recruitment" element={<Recruitment />} />
-          <Route path="profile" element={<AdminProfile />} />
-          <Route path="lecturers" element={<LecturerManagement />} />
-          <Route path="classes" element={<ClassesManagement />} />
-          <Route path="courses" element={<CoursesPage />} />
-          <Route path="course-mapping" element={<CourseMappingPage />} />
-          <Route path="contracts" element={<ContractGeneration />} />
-        </Route>
+        />
+
+          {/* Admin + Nested routes */}
+          <Route
+            path="/admin"
+            element={
+              <RequireRole allowed={["admin"]}>
+                <AdminDashboardLayout />
+              </RequireRole>
+            }
+          >
+            <Route index element={<AdminHome />} />
+            <Route path="recruitment" element={<Recruitment />} />
+            <Route path="profile" element={<AdminProfile />} />
+            <Route path="lecturers" element={<LecturerManagement />} />
+            <Route path="classes" element={<ClassesManagement />} />
+            <Route path="courses" element={<CoursesPage />} />
+            <Route path="course-mapping" element={<CourseMappingPage />} />
+            <Route path="contracts" element={<ContractGeneration />} />
+          </Route>
 
         {/* Lecturer + Nested routes */}
         <Route
@@ -101,33 +128,53 @@ function App() {
           <Route path="profile" element={<LecturerProfile />} />
           <Route path="my-contracts" element={<LecturerContracts />} />
         </Route>
-        <Route path="/onboarding" element={<Onboarding />} />
 
-        {/* Management + Nested routes */}
+        {/* Advisor + Nested routes (same panel UX as lecturer, but different profile settings design) */}
         <Route
-          path="/management"
+          path="/advisor"
           element={
-            <RequireRole allowed={["management"]}>
-              <ManagementDashboardLayout />
+            <RequireRole allowed={["advisor"]}>
+              <LecturerDashboardLayout />
             </RequireRole>
           }
         >
-          <Route index element={<ManagementHome />} />
-          <Route path="profile" element={<ManagementProfile />} />
-          <Route path="contracts" element={<ManagementContracts />} />
+          <Route index element={<AdvisorDashboard />} />
+          <Route path="profile" element={<AdvisorProfile />} />
+          <Route path="my-contracts" element={<LecturerContracts />} />
         </Route>
+        <Route path="/onboarding" element={<Onboarding />} />
 
-        {/* Fallback: if authenticated, send to role home; else login */}
-        <Route
-          path="*"
-          element={authUser ? <Navigate to={`/${authUser.role}`} replace /> : <Navigate to="/login" replace />}
-        />
-      </Routes>
+          {/* Management + Nested routes */}
+          <Route
+            path="/management"
+            element={
+              <RequireRole allowed={["management"]}>
+                <ManagementDashboardLayout />
+              </RequireRole>
+            }
+          >
+            <Route index element={<ManagementHome />} />
+            <Route path="profile" element={<ManagementProfile />} />
+            <Route path="contracts" element={<ManagementContracts />} />
+          </Route>
+
+          {/* Fallback: if authenticated, send to role home; else login */}
+          <Route
+            path="*"
+            element={
+              authUser ? (
+                <Navigate to={`/${authUser.role}`} replace />
+              ) : (
+                <Navigate to="/login" replace />
+              )
+            }
+          />
+        </Routes>
       </Suspense>
 
       <Toaster position="top-center" toastOptions={{ duration: 3000 }} />
     </>
-  )
+  );
 }
 
 export default App

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuthStore } from "../store/useAuthStore";
-import { 
-  LayoutDashboard, 
-  Users, 
+import {
+  LayoutDashboard,
+  Users,
   UserPlus,
-  FileText, 
-  LogOut, 
-  Building2, 
+  FileText,
+  LogOut,
+  Building2,
   Settings,
   PanelRightClose,
   PanelRightOpen,
@@ -18,10 +18,11 @@ import {
   UserCog,
   GraduationCap,
   UsersIcon,
+  CalendarDays,
   FileBarChart,
   Shield,
   ChevronDown,
-  Briefcase
+  Briefcase,
 } from "lucide-react";
 
 // Font styles
@@ -40,7 +41,7 @@ const sidebarHeadingFont = {
 };
 
 /**
- * @typedef {'superadmin' | 'admin' | 'lecturer' | 'management'} UserRole
+ * @typedef {'superadmin' | 'admin' | 'lecturer' | 'advisor' | 'management'} UserRole
  * 
  * @typedef {Object} NavItem
  * @property {string} title - The title of the navigation item
@@ -59,7 +60,7 @@ const navItems = [
     title: "Dashboard",
     href: "/dashboard",
     icon: LayoutDashboard,
-    roles: ["superadmin", "admin", "lecturer", "management"],
+    roles: ["superadmin", "admin", "lecturer", "advisor", "management"],
     category: null
   },
   {
@@ -68,7 +69,7 @@ const navItems = [
     icon: GraduationCap,
     roles: ["admin"],
     category: "academic",
-    hasSubmenu: true
+    hasSubmenu: true,
   },
   {
     title: "Personnel & HR",
@@ -76,13 +77,13 @@ const navItems = [
     icon: UsersIcon,
     roles: ["admin"],
     category: "personnel",
-    hasSubmenu: true
+    hasSubmenu: true,
   },
   {
     title: "My Contracts",
     href: "/lecturer/my-contracts",
     icon: Briefcase,
-    roles: ["lecturer"],
+    roles: ["lecturer", "advisor"],
     category: null
   },
   {
@@ -90,14 +91,21 @@ const navItems = [
     href: "/management/contracts",
     icon: FileText,
     roles: ["management"],
-    category: null
+    category: null,
+  },
+  {
+    title: "Lecturer Schedule",
+    href: "/lecturer/schedule",
+    icon: CalendarDays,
+    roles: ["lecturer"],
+    category: null,
   },
   {
     title: "Profile Settings",
     href: "/management/profile",
     icon: Settings,
     roles: ["management"],
-    category: null
+    category: null,
   },
   {
     title: "System Administration",
@@ -109,16 +117,23 @@ const navItems = [
   },
   {
     title: "Profile Settings",
-    href: "/admin/profile",
+    href: "/superadmin/profile",
     icon: Settings,
-    roles: ["admin"],
+    roles: ["superadmin"],
     category: null
   },
   {
-    title: "Account Settings", 
+    title: "Profile Settings",
+    href: "/admin/profile",
+    icon: Settings,
+    roles: ["admin"],
+    category: null,
+  },
+  {
+    title: "Profile Settings", 
     href: "/lecturer/profile",
     icon: Settings,
-    roles: ["lecturer"],
+    roles: ["lecturer", "advisor"],
     category: null
   },
 ];
@@ -172,6 +187,7 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
       superadmin: '/superadmin',
       admin: '/admin',
       lecturer: '/lecturer',
+      advisor: '/advisor',
       management: '/management'
     }[user.role] || '/dashboard');
   }, [user.role]);
@@ -216,6 +232,7 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
       superadmin: 'System Administrator',
       admin: 'Administrator',
       lecturer: 'Lecturer',
+      advisor: 'Advisor',
       management: 'Management'
     };
     return roleLabels[role] || role;
@@ -226,7 +243,8 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
       superadmin: 'System Panel',
       admin: 'Admin Panel',
       management: 'Management Panel',
-      lecturer: 'Lecturer Panel'
+      lecturer: 'Lecturer Panel',
+      advisor: 'Advisor Panel'
     };
     return panel[role] || 'Panel';
   };
@@ -236,6 +254,11 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
     let href = item.href;
     if (item.title === 'Dashboard') {
       href = roleRoot;
+    }
+    // Advisors reuse the lecturer-like sidebar but should navigate under /advisor
+    if (String(user.role || '').toLowerCase() === 'advisor') {
+      if (href.startsWith('/lecturer/')) href = href.replace('/lecturer/', '/advisor/');
+      if (href === '/lecturer') href = '/advisor';
     }
     const active = isActive(href, item.title);
     const isExpanded = expandedItems[item.title];
@@ -249,11 +272,11 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
               e.stopPropagation?.();
               if (collapsed) {
                 // When collapsed, expand sidebar and open this submenu so child icons are visible
-                try { localStorage.setItem('sidebarCollapsed', 'false'); } catch {}
+                try { localStorage.setItem('sidebarCollapsed', 'false'); } catch { /* ignore */ }
                 setCollapsed(false);
                 setExpandedItems(prev => {
                   const next = { ...prev, [item.title]: true };
-                  try { localStorage.setItem('expandedItems', JSON.stringify(next)); } catch {}
+                  try { localStorage.setItem('expandedItems', JSON.stringify(next)); } catch { /* ignore */ }
                   return next;
                 });
                 return;
@@ -326,7 +349,7 @@ export function Sidebar({ user: userProp, onLogout, mobileOpen = false, onClose 
                     location.pathname.includes('/admin/classes') ? "bg-blue-50 text-blue-600" : "text-gray-600 hover:text-blue-600"
                   )} style={sidebarFont}>
                     <School className="h-4 w-4" />
-                    <span>Class Scheduling</span>
+                    <span>Class Management</span>
                   </div>
                 </Link>
                 <Link to="/admin/course-mapping" onClick={isMobile ? onClose : undefined}>
