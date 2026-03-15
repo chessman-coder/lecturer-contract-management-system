@@ -45,6 +45,73 @@ function scheduleMatchesAcademicYear(schedule, academicYear) {
   return `${startYear}-${startYear + 1}` === academicYear;
 }
 
+function getMajorAbbreviation(majorName) {
+  const raw = String(majorName || "").trim();
+  if (!raw) return "";
+
+  // Prefer explicit abbreviation in parentheses, e.g. "Software Engineering (SE)"
+  const parenMatch = raw.match(/\(([^)]+)\)/);
+  if (parenMatch?.[1]) {
+    return parenMatch[1].replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  }
+
+  // Fallback: build from initials, e.g. "Data Science" -> "DS"
+  return raw
+    .split(/\s+/)
+    .map((word) => word.replace(/[^a-zA-Z0-9]/g, ""))
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+}
+
+function parseTimeSlotMinutes(label) {
+  const raw = String(label || "").trim();
+  const match = raw.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+  if (!match) return 0;
+
+  const startMinutes = Number(match[1]) * 60 + Number(match[2]);
+  const endMinutes = Number(match[3]) * 60 + Number(match[4]);
+  const diff = endMinutes - startMinutes;
+  return diff > 0 ? diff : 0;
+}
+
+function getScheduleStats(schedule) {
+  const entries = safeArray(
+    schedule?.ScheduleEntries || schedule?.scheduleEntries || schedule?.entries,
+  );
+
+  const courseKeys = new Set();
+  let totalMinutes = 0;
+
+  entries.forEach((entry) => {
+    const courseId = entry?.CourseMapping?.Course?.id;
+    const courseName = entry?.CourseMapping?.Course?.course_name;
+    const key = String(courseId || courseName || "").trim();
+    if (key) courseKeys.add(key);
+
+    const durationFromSlot = parseTimeSlotMinutes(entry?.TimeSlot?.label);
+    const durationFromField = Number(entry?.duration_minutes || 0);
+    totalMinutes +=
+      durationFromField > 0 ? durationFromField : durationFromSlot;
+  });
+
+  if (totalMinutes <= 0) {
+    const fallbackHours = Number(schedule?.total_hours || 0);
+    if (fallbackHours > 0) totalMinutes = fallbackHours * 60;
+  }
+
+  const totalHours = totalMinutes / 60;
+  const totalHoursLabel = Number.isInteger(totalHours)
+    ? String(totalHours)
+    : totalHours.toFixed(1);
+
+  return {
+    courses: courseKeys.size,
+    hoursLabel: totalMinutes > 0 ? totalHoursLabel : "0",
+  };
+}
+
 export default function ScheduleCreation() {
   const [majors, setMajors] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -63,6 +130,7 @@ export default function ScheduleCreation() {
   const [isGenerateAllLoading, setIsGenerateAllLoading] = useState(false);
   const [activeDownloadId, setActiveDownloadId] = useState(null);
   const [generatedCount, setGeneratedCount] = useState(0);
+  const [groupStatsById, setGroupStatsById] = useState({});
 
   const scheduleByGroup = useMemo(() => {
     const map = new Map();
@@ -104,7 +172,7 @@ export default function ScheduleCreation() {
   }, [majors, selectedMajor]);
 
   const visibleGroups = useMemo(() => {
-    const majorToken = normalizeName(selectedMajorName);
+    const majorAbbr = getMajorAbbreviation(selectedMajorName);
     return safeArray(groups).filter((group) => {
       const schedule = getScheduleForGroup(group);
       const yearOk = scheduleMatchesAcademicYear(
@@ -112,16 +180,12 @@ export default function ScheduleCreation() {
         selectedAcademicYear,
       );
       if (!yearOk) return false;
-      if (!majorToken) return true;
+      if (!majorAbbr) return true;
 
-      const searchArea = [
-        group?.name,
-        group?.Class?.name,
-        group?.Class?.Specialization?.name,
-      ]
-        .map(normalizeName)
-        .join(" ");
-      return searchArea.includes(majorToken);
+      const groupName = String(group?.name || "")
+        .trim()
+        .toUpperCase();
+      return groupName === majorAbbr || groupName.startsWith(`${majorAbbr}-`);
     });
   }, [groups, selectedAcademicYear, selectedMajorName, getScheduleForGroup]);
 
@@ -154,6 +218,51 @@ export default function ScheduleCreation() {
     );
   }, [visibleGroups]);
 
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchVisibleGroupStats = async () => {
+      if (!visibleGroups.length) {
+        if (isActive) setGroupStatsById({});
+        return;
+      }
+
+      const nextStats = {};
+
+      await Promise.all(
+        visibleGroups.map(async (group) => {
+          const schedule = getScheduleForGroup(group);
+          const groupId = group?.id;
+          if (!groupId) return;
+
+          if (!schedule?.id) {
+            nextStats[groupId] = { courses: 0, hoursLabel: "0" };
+            return;
+          }
+
+          try {
+            const { data } = await axiosInstance.get(
+              `/schedules/${schedule.id}`,
+            );
+            nextStats[groupId] = getScheduleStats(data?.schedule || {});
+          } catch {
+            nextStats[groupId] = getScheduleStats(schedule);
+          }
+        }),
+      );
+
+      if (isActive) {
+        setGroupStatsById(nextStats);
+      }
+    };
+
+    fetchVisibleGroupStats();
+
+    return () => {
+      isActive = false;
+    };
+  }, [visibleGroups, getScheduleForGroup]);
+
   const buildPreviewFromSchedule = useCallback((scheduleDetail) => {
     const entries = safeArray(
       scheduleDetail?.ScheduleEntries ||
@@ -183,14 +292,26 @@ export default function ScheduleCreation() {
       const course =
         entry?.CourseMapping?.Course?.course_name || "Unknown Course";
       const teacherTitle = entry?.CourseMapping?.LecturerProfile?.title || "";
-      const teacherName =
+      let teacherName =
         entry?.CourseMapping?.LecturerProfile?.full_name_english || "";
+      // Avoid double title
+      let teacherDisplay = teacherName;
+      if (
+        teacherTitle &&
+        teacherName &&
+        !teacherName
+          .trim()
+          .toLowerCase()
+          .startsWith(teacherTitle.trim().toLowerCase())
+      ) {
+        teacherDisplay = `${teacherTitle} ${teacherName}`.trim();
+      }
       const room = entry?.room || "TBA";
 
       if (!grid[slot]) grid[slot] = {};
       grid[slot][day] = {
         course,
-        teacher: `${teacherTitle} ${teacherName}`.trim() || "TBA",
+        teacher: teacherDisplay || "TBA",
         room,
       };
     });
@@ -412,6 +533,7 @@ export default function ScheduleCreation() {
                   ) : (
                     visibleGroups.map((group) => {
                       const schedule = getScheduleForGroup(group);
+                      const stats = groupStatsById[group.id];
                       const isSelected = selectedGroupIds.includes(group.id);
                       return (
                         <div
@@ -439,7 +561,9 @@ export default function ScheduleCreation() {
                             <p>{group?.num_of_student || 0} students</p>
                             <p>
                               {schedule
-                                ? `Schedule: ${schedule.name || `#${schedule.id}`}`
+                                ? stats
+                                  ? `${stats.courses} courses | ${stats.hoursLabel} hours`
+                                  : "Loading course/hour stats..."
                                 : "Schedule: Not created yet"}
                             </p>
                           </div>
@@ -501,15 +625,21 @@ export default function ScheduleCreation() {
               </div>
             ) : (
               <table className="w-full min-w-[860px] border-collapse text-sm">
+                <colgroup>
+                  <col style={{ width: "180px" }} />
+                  {weekDays.map((_, idx) => (
+                    <col key={idx} style={{ width: "1fr" }} />
+                  ))}
+                </colgroup>
                 <thead>
                   <tr className="bg-slate-100 text-slate-700">
-                    <th className="border border-slate-200 px-4 py-2 font-semibold">
+                    <th className="border border-slate-200 px-4 py-2 font-semibold w-[120px] text-center">
                       Time
                     </th>
                     {weekDays.map((day) => (
                       <th
                         key={day}
-                        className="border border-slate-200 px-4 py-2 text-center font-semibold"
+                        className="border border-slate-200 px-4 py-2 text-center font-semibold w-[160px]"
                       >
                         {day}
                       </th>
@@ -519,7 +649,7 @@ export default function ScheduleCreation() {
                 <tbody>
                   {previewTimeSlots.map((slot) => (
                     <tr key={slot} className="align-top">
-                      <td className="h-28 border border-slate-200 px-3 py-3 font-medium text-slate-700">
+                      <td className="h-28 border border-slate-200 px-3 py-3 font-medium text-slate-700 text-center">
                         {slot}
                       </td>
                       {weekDays.map((day) => {
@@ -527,20 +657,24 @@ export default function ScheduleCreation() {
                         return (
                           <td
                             key={`${slot}-${day}`}
-                            className="h-28 border border-slate-200 px-2 py-2 text-center"
+                            className="relative h-28 border border-slate-200 px-2 py-2 text-center align-top w-[160px]"
                           >
                             {cell ? (
-                              <div className="mx-auto max-w-[150px] space-y-1 text-slate-700">
-                                <p className="text-xs font-semibold leading-4">
-                                  {cell.course}
-                                </p>
-                                <p className="text-[11px] text-slate-500">
-                                  {cell.teacher}
-                                </p>
-                                <p className="text-[11px] text-slate-500">
-                                  {cell.room}
-                                </p>
-                              </div>
+                              <>
+                                <div className="mx-auto max-w-[150px] space-y-1 text-slate-700">
+                                  <p className="text-s font-bold leading-4">
+                                    {cell.course}
+                                  </p>
+                                  <p className="text-[13px] text-slate-600">
+                                    {cell.teacher}
+                                  </p>
+                                </div>
+                                {cell.room && (
+                                  <span className="absolute bottom-2 right-2 text-[13px] text-slate-700 font-semibold">
+                                    {cell.room}
+                                  </span>
+                                )}
+                              </>
                             ) : null}
                           </td>
                         );
