@@ -32,7 +32,7 @@ export const getSchedules = async (req, res) => {
       include: [
         {
           model: Group,
-          attributes: ['name', 'num_of_student'],
+          attributes: ['id', 'name', 'num_of_student'],
           required: true,
           include: [
             {
