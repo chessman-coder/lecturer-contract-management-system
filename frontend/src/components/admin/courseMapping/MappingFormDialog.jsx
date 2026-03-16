@@ -51,12 +51,6 @@ export default function MappingFormDialog({
     );
   }, []);
 
-  const availability = useMappingAvailabilityPopover({
-    isOpen,
-    availability: form.availability,
-    setForm,
-  });
-
   const {
     yearLevelOptionsForAY,
     termOptionsForAYLevel,
@@ -66,10 +60,17 @@ export default function MappingFormDialog({
     selectedClass,
   } = useMappingCascades({ form, classes, courses, lecturers, classMap, courseMap });
 
-  const { groupsForSelectedClass, assignedGroupsForEdit } = useMappingGroups({
+  const { groupsForSelectedClass } = useMappingGroups({
     selectedClass,
     form,
     isEditMode,
+  });
+
+  const availability = useMappingAvailabilityPopover({
+    isOpen,
+    form,
+    setForm,
+    groupsForSelectedClass,
   });
 
   useTeachingTypeGroupSync({ isOpen, teachingType, groupsForSelectedClass, form });
