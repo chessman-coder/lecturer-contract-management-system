@@ -121,6 +121,8 @@ export async function createDraftContract(req, res) {
     const { lecturer_user_id, academic_year, term, year_level, start_date, end_date } = req.body;
     const coursesIn = Array.isArray(req.body?.courses) ? req.body.courses : [];
     const normalizedItems = normalizeItems(req.body?.items);
+    const rawRate = req.body?.hourly_rate;
+    const hourly_rate = rawRate != null ? (Number.isFinite(Number(rawRate)) ? Number(rawRate) : null) : null;
 
     // Basic validation
     const errors = [];
@@ -206,6 +208,7 @@ export async function createDraftContract(req, res) {
           end_date: toDateOnly(end_date),
           created_by: req.user.id,
           items: normalizedItems,
+          hourly_rate,
         },
         { transaction: tx }
       );
@@ -1274,6 +1277,10 @@ export async function uploadSignature(req, res) {
     const who = (req.body.who || 'lecturer').toLowerCase();
     const contract = await TeachingContract.findByPk(id);
     if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    // Lecturers may only sign their own contract
+    if (String(req.user?.role).toLowerCase() === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied: you do not own this contract' });
+    }
     if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
       const allowed = await isContractInManagerDept(contract.id, req);
       if (!allowed) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });

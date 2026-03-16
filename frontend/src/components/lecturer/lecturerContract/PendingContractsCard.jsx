@@ -15,11 +15,12 @@ import {
  * PendingContractsCard Component
  * Displays contracts awaiting lecturer signature
  */
-export default function PendingContractsCard({ 
-  pendingContracts, 
-  hourlyRate, 
-  onPreview, 
-  onSign 
+export default function PendingContractsCard({
+  pendingContracts,
+  hourlyRate,
+  onPreview,
+  onSign,
+  onRedo,
 }) {
   if (!pendingContracts || pendingContracts.length === 0) {
     return null;
@@ -78,8 +79,8 @@ export default function PendingContractsCard({
               <div>
                 <span className="text-gray-600">Period:</span> {period}
               </div>
-              <div className="truncate" title={dept || '—'}>
-                <span className="text-gray-600">Department:</span> {dept || '—'}
+              <div className="truncate" title={dept || "—"}>
+                <span className="text-gray-600">Department:</span> {dept || "—"}
               </div>
               <div>
                 <span className="text-gray-600">Hours:</span> {hours}h
@@ -96,7 +97,7 @@ export default function PendingContractsCard({
               </div>
             </div>
           </div>
-          
+
           {/* Right: actions */}
           <div className="flex flex-wrap gap-2">
             <Button 
@@ -113,7 +114,7 @@ export default function PendingContractsCard({
               onClick={() => onSign(contract)} 
               className="bg-amber-600 hover:bg-amber-700 gap-2"
             >
-              <PenTool className="w-4 h-4" /> Sign Now
+              <PenTool className="w-4 h-4 mr-1.5" /> Sign Now
             </Button>
           </div>
         </div>
