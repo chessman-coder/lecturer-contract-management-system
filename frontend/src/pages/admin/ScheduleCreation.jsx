@@ -643,7 +643,7 @@ export default function ScheduleCreation() {
                             {cell ? (
                               <>
                                 <div className="mx-auto max-w-[150px] space-y-1 text-slate-700">
-                                  <p className="text-s font-bold leading-4">
+                                  <p className="text-sm font-bold leading-4">
                                     {cell.course}
                                   </p>
                                   <p className="text-[13px] text-slate-600">
