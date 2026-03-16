@@ -406,14 +406,14 @@ export default function ScheduleCreation() {
         },
         "all-schedules.pdf",
       );
-      setGeneratedCount((prev) => prev + Math.max(visibleGroups.length, 1));
+      setGeneratedCount((prev) => prev + 1);
     } catch (error) {
       console.error("[ScheduleCreation] failed to generate all PDFs", error);
       toast.error("Failed to generate all PDFs");
     } finally {
       setIsGenerateAllLoading(false);
     }
-  }, [downloadSchedulePdf, visibleGroups.length, selectedMajorName]);
+  }, [downloadSchedulePdf, selectedMajorName]);
 
   const handleGenerateSelected = useCallback(async () => {
     if (!selectedGroupIds.length) return;
