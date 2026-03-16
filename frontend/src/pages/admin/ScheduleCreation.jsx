@@ -67,7 +67,7 @@ function getMajorAbbreviation(majorName) {
 
 function parseTimeSlotMinutes(label) {
   const raw = String(label || "").trim();
-  const match = raw.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
+  const match = raw.match(/(\d{1,2})h?:(\d{2})\s*-\s*(\d{1,2})h?:(\d{2})/);
   if (!match) return 0;
 
   const startMinutes = Number(match[1]) * 60 + Number(match[2]);
