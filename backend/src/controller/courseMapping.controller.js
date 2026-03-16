@@ -114,17 +114,36 @@ export const backfillCourseMappingSchedules = async (req, res) => {
     let synced = 0;
     const failed = [];
 
-    for (const row of rows) {
-      const isEligible = !!row.group_id && !!row.availability && isAcceptedStatus(row.status);
-      if (!isEligible) continue;
-      eligible += 1;
-      try {
-        await syncScheduleForCourseMapping(row.id);
-        synced += 1;
-      } catch (e) {
-        failed.push({ id: row.id, error: e?.message || 'Unknown error' });
+    const CONCURRENCY_LIMIT = 5;
+    let index = 0;
+
+    const worker = async () => {
+      while (true) {
+        const currentIndex = index;
+        if (currentIndex >= rows.length) break;
+        index += 1;
+
+        const row = rows[currentIndex];
+        const isEligible = !!row.group_id && !!row.availability && isAcceptedStatus(row.status);
+        if (!isEligible) {
+          continue;
+        }
+
+        eligible += 1;
+        try {
+          await syncScheduleForCourseMapping(row.id);
+          synced += 1;
+        } catch (e) {
+          failed.push({ id: row.id, error: e?.message || 'Unknown error' });
+        }
       }
+    };
+
+    const workers = [];
+    for (let i = 0; i < CONCURRENCY_LIMIT; i += 1) {
+      workers.push(worker());
     }
+    await Promise.all(workers);
 
     return res.json({
       message: 'Backfill completed',
