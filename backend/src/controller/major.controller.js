@@ -51,7 +51,7 @@ export const createMajor = async (req, res) => {
     const canonicalName = canonicalizeMajorName(name);
     if (!canonicalName || !CANONICAL_MAJORS.includes(canonicalName)) {
       return res.status(400).json({
-        error: 'Only the predefined 6 majors are allowed',
+        error: `Only the predefined ${CANONICAL_MAJORS.length} majors are allowed`,
         allowedMajors: CANONICAL_MAJORS,
       });
     }
