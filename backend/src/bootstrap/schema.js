@@ -61,6 +61,11 @@ export async function runSchemaBootstrapping(sequelize) {
       'lab_room_number',
       'ALTER TABLE `Course_Mappings` ADD COLUMN `lab_room_number` VARCHAR(50) NULL AFTER `theory_room_number`'
     );
+
+    await addIfMissing(
+      'availability_assignments',
+      'ALTER TABLE `Course_Mappings` ADD COLUMN `availability_assignments` TEXT NULL AFTER `availability`'
+    );
   } catch (e) {
     console.warn('[schema] ensure Course_Mappings theory/lab columns failed:', e.message);
   }

@@ -62,6 +62,7 @@ export default function CourseMappingPage() {
     group_count: 1,
     type_hours: '',
     availability: '',
+    availability_assignments_by_group: {},
     status: 'Pending',
     contacted_by: '',
     contactedBy: '',
@@ -87,6 +88,7 @@ export default function CourseMappingPage() {
       group_count: 1,
       type_hours: '',
       availability: '',
+      availability_assignments_by_group: {},
       status: 'Pending',
       contacted_by: '',
       contactedBy: '',
@@ -128,7 +130,6 @@ export default function CourseMappingPage() {
         form.lab_room_by_group && typeof form.lab_room_by_group === 'object' ? form.lab_room_by_group : {};
       if (!form.course_id) requiredErrors.push('Course');
       if (!form.lecturer_profile_id) requiredErrors.push('Lecturer');
-      if (!form.availability) requiredErrors.push('Availability');
       if (requiredErrors.length) {
         console.error('[submitAdd] Required fields missing:', requiredErrors);
         setAddError(`Please fill in/select: ${requiredErrors.join(', ')}.`);
@@ -162,9 +163,77 @@ export default function CourseMappingPage() {
         }
       }
 
+      // Availability assignment validation (per-group)
+      {
+        const assignmentsRaw =
+          form.availability_assignments_by_group && typeof form.availability_assignments_by_group === 'object'
+            ? form.availability_assignments_by_group
+            : {};
+
+        const thSet = new Set((Array.isArray(form.theory_group_ids) ? form.theory_group_ids : []).map(String));
+        const lbSet = new Set((Array.isArray(form.lab_group_ids) ? form.lab_group_ids : []).map(String));
+        const theoryHours = String(form.theory_hours || '').trim().toLowerCase() === '30h' ? '30h' : '15h';
+        const errors = [];
+        const used = new Map(); // slotKey -> { type: 'THEORY'|'LAB', gid }
+
+        const consume = (groupId, groupLabel, typeLabel, arr) => {
+          const seenLocal = new Set();
+          (Array.isArray(arr) ? arr : []).forEach((s) => {
+            const day = String(s?.day || '').trim();
+            const session = String(s?.sessionId || s?.session || '').trim().toUpperCase();
+            if (!day || !session) return;
+            const key = `${day}|${session}`;
+            if (seenLocal.has(key)) return;
+            seenLocal.add(key);
+
+            const prev = used.get(key);
+            if (typeLabel === 'Theory') {
+              if (prev) {
+                if (prev.type === 'LAB') {
+                  errors.push(`Session ${day} ${session} is assigned to more than one group.`);
+                } else if (theoryHours !== '15h') {
+                  errors.push(`Session ${day} ${session} is assigned to more than one group.`);
+                }
+              } else {
+                used.set(key, { type: 'THEORY', gid: groupId });
+              }
+            } else {
+              // Lab can never overlap
+              if (prev) errors.push(`Session ${day} ${session} is assigned to more than one group.`);
+              used.set(key, { type: 'LAB', gid: groupId });
+            }
+          });
+        };
+
+        for (const gid of thSet) {
+          const groupLabel = `Group ${gid}`;
+          const th = assignmentsRaw?.[gid]?.THEORY || assignmentsRaw?.[gid]?.theory || [];
+          const len = Array.isArray(th) ? th.length : 0;
+          if (theoryHours === '30h') {
+            if (len < 1 || len > 2) errors.push(`Theory ${groupLabel}: select 1–2 sessions.`);
+          } else {
+            if (len !== 1) errors.push(`Theory ${groupLabel}: select exactly 1 session.`);
+          }
+          consume(gid, groupLabel, 'Theory', th);
+        }
+
+        for (const gid of lbSet) {
+          const groupLabel = `Group ${gid}`;
+          const lb = assignmentsRaw?.[gid]?.LAB || assignmentsRaw?.[gid]?.lab || [];
+          if ((Array.isArray(lb) ? lb.length : 0) !== 2) errors.push(`Lab ${groupLabel}: select exactly 2 sessions.`);
+          consume(gid, groupLabel, 'Lab', lb);
+        }
+
+        if (errors.length) {
+          setAddError(errors[0]);
+          return;
+        }
+      }
+
       const payload = {
         ...form,
         ...teachingPayload,
+        availability_assignments_by_group: form.availability_assignments_by_group || {},
         theory_group_ids: (Array.isArray(form.theory_group_ids) ? form.theory_group_ids : [])
           .map((x) => parseInt(String(x), 10))
           .filter((n) => Number.isInteger(n) && n > 0),
@@ -262,6 +331,27 @@ export default function CourseMappingPage() {
     const thUniq = uniq(theoryGroupIds);
     const lbUniq = uniq(labGroupIds);
 
+    const availabilityAssignmentsByGroup = {};
+    if (hasGroupRows) {
+      for (const r of rowsForEdit) {
+        const gid = r?.group_id ? String(r.group_id) : null;
+        if (!gid) continue;
+        const assigns = Array.isArray(r?.availability_assignments) ? r.availability_assignments : [];
+        const th = assigns.find((a) => String(a?.groupType || '').toUpperCase() === 'THEORY');
+        const lb = assigns.find((a) => String(a?.groupType || '').toUpperCase() === 'LAB');
+        availabilityAssignmentsByGroup[gid] = {
+          THEORY: (Array.isArray(th?.assignedSessions) ? th.assignedSessions : []).map((s) => ({
+            day: s?.day,
+            sessionId: s?.session,
+          })),
+          LAB: (Array.isArray(lb?.assignedSessions) ? lb.assignedSessions : []).map((s) => ({
+            day: s?.day,
+            sessionId: s?.session,
+          })),
+        };
+      }
+    }
+
     setForm({
       class_id: m.class_id,
       group_ids: hasGroupRows
@@ -293,6 +383,7 @@ export default function CourseMappingPage() {
       lab_hours: m.lab_hours || '',
       lab_groups: m.lab_groups ?? '',
       availability: m.availability || '',
+      availability_assignments_by_group: availabilityAssignmentsByGroup,
       status: m.status,
       contacted_by: m.contacted_by || '',
       room_number: m.room_number || m.roomNumber || '',
@@ -321,7 +412,7 @@ export default function CourseMappingPage() {
 
       const payload = {
         lecturer_profile_id: form.lecturer_profile_id,
-        availability: form.availability,
+        availability_assignments_by_group: form.availability_assignments_by_group || {},
         status: form.status,
         contacted_by: form.contacted_by,
         room_number: (form.room_number || '').toUpperCase(),
