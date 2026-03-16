@@ -498,24 +498,9 @@ export default function ScheduleCreation() {
                 <h2 className="text-sm font-semibold text-slate-800">
                   Bulk Generation
                 </h2>
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllVisible}
-                    className="rounded-md bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700"
-                  >
-                    Select All
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleClearSelection}
-                    className="rounded-md bg-red-100 px-3 py-1 text-xs font-semibold text-red-600"
-                  >
-                    Clear
-                  </button>
-                </div>
                 <p className="mt-3 text-xs text-slate-500">
-                  {selectedGroupIds.length} groups selected
+                  All visible groups matching the selected filters will be
+                  included when generating PDFs.
                 </p>
               </div>
 
