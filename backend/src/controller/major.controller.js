@@ -1,4 +1,5 @@
 import Major from '../model/major.model.js';
+import { Op } from 'sequelize';
 
 const CANONICAL_MAJORS = [
   'Software Engineering',
@@ -21,9 +22,13 @@ const MAJOR_ALIAS_TO_CANONICAL = {
 };
 
 function canonicalizeMajorName(name) {
-  const normalized = String(name || '')
-    .trim()
-    .toLowerCase();
+  const raw = String(name || '').trim();
+  if (!raw) return null;
+
+  // Remove trailing abbreviation in parentheses, e.g. "Software Engineering (SE)" -> "Software Engineering"
+  const withoutAbbreviation = raw.replace(/\s*\([^)]+\)\s*$/u, '');
+
+  const normalized = withoutAbbreviation.toLowerCase();
   return MAJOR_ALIAS_TO_CANONICAL[normalized] || null;
 }
 
@@ -56,10 +61,12 @@ export const createMajor = async (req, res) => {
       });
     }
 
-    // Check if major already exists (case-insensitive)
+    // Check if major already exists (case-insensitive, allow seeded names with abbreviations)
     const existingMajor = await Major.findOne({
       where: {
-        name: canonicalName,
+        name: {
+          [Op.iLike]: `${canonicalName}%`,
+        },
       },
     });
 
@@ -83,10 +90,12 @@ export const findOrCreateMajors = async (majorNames) => {
     const canonicalName = canonicalizeMajorName(name);
     if (!canonicalName || !CANONICAL_MAJORS.includes(canonicalName)) continue;
 
-    // Try to find existing major (case-insensitive)
+    // Try to find existing major (case-insensitive, allow seeded names with abbreviations)
     let major = await Major.findOne({
       where: {
-        name: canonicalName,
+        name: {
+          [Op.iLike]: `${canonicalName}%`,
+        },
       },
     });
 
@@ -99,7 +108,9 @@ export const findOrCreateMajors = async (majorNames) => {
         if (error.name === 'SequelizeUniqueConstraintError') {
           major = await Major.findOne({
             where: {
-              name: canonicalName,
+              name: {
+                [Op.iLike]: `${canonicalName}%`,
+              },
             },
           });
         } else {
