@@ -59,7 +59,10 @@ async function saveCustomCellsByGroup(customCellsByGroup) {
     if (!groupId) continue;
 
     const serialized = stringifyCustomCells(cellMap);
-    const existing = await Schedule.findOne({ where: { group_id: groupId } });
+    const existing = await Schedule.findOne({
+      where: { group_id: groupId },
+      order: [['created_at', 'DESC']],
+    });
     if (existing) {
       await existing.update({ custom_cells: serialized });
       continue;
@@ -80,13 +83,22 @@ async function loadCustomCellsByGroup(groupIds) {
 
   const rows = await Schedule.findAll({
     where: { group_id: { [Op.in]: groupIds } },
-    attributes: ['group_id', 'custom_cells'],
+    attributes: ['group_id', 'custom_cells', 'created_at'],
+    order: [
+      ['group_id', 'ASC'],
+      ['created_at', 'DESC'],
+    ],
   });
 
   return rows.reduce((acc, row) => {
     const gid = row?.group_id;
     if (!gid) return acc;
-    acc[String(gid)] = parseCustomCells(row?.custom_cells);
+    const key = String(gid);
+    // Because rows are ordered by created_at DESC, the first row for each group_id
+    // is the most recent schedule; keep the first and ignore subsequent ones.
+    if (!(key in acc)) {
+      acc[key] = parseCustomCells(row?.custom_cells);
+    }
     return acc;
   }, {});
 }
