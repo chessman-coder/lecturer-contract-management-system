@@ -5,6 +5,8 @@ import {
   updateSchedule,
   deleteSchedule,
   generateFilteredSchedulePDF,
+  generateFilteredScheduleHTML,
+  generateSchedulePDFFromSavedHTML,
 } from '../controller/schedule.controller.js';
 import { protect, authorizeRoles } from '../middleware/auth.middleware.js';
 import express from 'express';
@@ -12,7 +14,10 @@ import express from 'express';
 const router = express.Router();
 
 // IMPORTANT: /pdf must come before /:id to avoid route conflicts
+// HTML generation / conversion endpoints must also come before /:id
 router.get('/pdf', generateFilteredSchedulePDF);
+router.post('/generate-html', generateFilteredScheduleHTML);
+router.get('/generated-pdf', generateSchedulePDFFromSavedHTML);
 router.get('/', getSchedules);
 router.get('/:id', getScheduleById);
 router.post('/', createSchedule);

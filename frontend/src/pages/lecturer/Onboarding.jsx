@@ -1,6 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useAuthStore } from '../../store/useAuthStore';
-import { submitLecturerOnboarding } from '../../services/lecturerProfile.service';
+import {
+  getAdvisorOnboardingStatus,
+  getLecturerOnboardingStatus,
+  submitLecturerOnboarding,
+  submitAdvisorOnboarding,
+} from '../../services/lecturerProfile.service';
 import { useResearchFields } from '../../hooks/useResearchFields';
 import { useUniversities } from '../../hooks/useUniversities';
 import { useMajors } from '../../hooks/useMajors';
@@ -68,6 +73,30 @@ export default function Onboarding() {
   // Local state
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const checkExistingOnboarding = async () => {
+      try {
+        const data = await (isAdvisor
+          ? getAdvisorOnboardingStatus()
+          : getLecturerOnboardingStatus());
+
+        if (!cancelled && data?.complete) {
+          navigate(isAdvisor ? '/advisor' : '/lecturer', { replace: true });
+        }
+      } catch {
+        // Let the page render if status check is temporarily unavailable.
+      }
+    };
+
+    checkExistingOnboarding();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAdvisor, navigate]);
 
   // Computed values
   const availableCourseNames = useMemo(() => 
@@ -308,10 +337,12 @@ export default function Onboarding() {
       }
       if (files.payrollFile) fd.append('payroll', files.payrollFile);
       
-      const res = await submitLecturerOnboarding(fd);
+      const res = await (isAdvisor ? submitAdvisorOnboarding(fd) : submitLecturerOnboarding(fd));
       const unmatched = res?.profile?.unmatched_courses || [];
-      
-      if (unmatched.length) {
+
+      if (res?.alreadyCompleted) {
+        toast.success('Onboarding already completed');
+      } else if (unmatched.length) {
         toast.error(`Some courses not matched: ${unmatched.slice(0, 3).join(', ')}`);
       } else {
         toast.success('Onboarding completed successfully!');
@@ -342,6 +373,11 @@ export default function Onboarding() {
       }, 100);
     } catch (error) {
       console.error(error);
+      if (error.response?.status === 400 && error.response?.data?.message === 'Onboarding already completed') {
+        toast.success('Onboarding already completed');
+        navigate(isAdvisor ? '/advisor' : '/lecturer');
+        return;
+      }
       toast.error(error.response?.data?.message || 'Failed to submit onboarding');
     } finally {
       setIsSubmitting(false);

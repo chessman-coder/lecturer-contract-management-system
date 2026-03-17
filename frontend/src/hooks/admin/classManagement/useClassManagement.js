@@ -8,6 +8,8 @@ const initialClassState = {
   term: "",
   year_level: "",
   academic_year: "",
+  start_term: "",
+  end_term: "",
   total_class: 1,
   courses: [],
   groups: [],
@@ -42,6 +44,8 @@ export function validateAcademicYear(academicYear) {
  * Validates required class fields
  */
 export function validateClassFields(classData) {
+  const isDateOnly = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v ?? '').trim());
+
   if (!classData.name.trim()) {
     return "Class name is required";
   }
@@ -65,6 +69,16 @@ export function validateClassFields(classData) {
   }
   if (!classData.year_level.trim()) {
     return "Year level is required";
+  }
+
+  if (!isDateOnly(classData?.start_term)) {
+    return "Start term is required";
+  }
+  if (!isDateOnly(classData?.end_term)) {
+    return "End term is required";
+  }
+  if (String(classData.start_term) > String(classData.end_term)) {
+    return "Start term must be on or before End term";
   }
   
   const academicYearError = validateAcademicYear(classData.academic_year);
@@ -126,6 +140,8 @@ export function useClassManagement(classes, setClasses) {
       term: classItem?.term || '',
       year_level: classItem?.year_level || '',
       academic_year: classItem?.academic_year || '',
+      start_term: classItem?.start_term || '',
+      end_term: classItem?.end_term || '',
       total_class: classItem?.total_class ?? 1,
       courses: Array.isArray(classItem?.courses) ? classItem.courses : [],
       groups,

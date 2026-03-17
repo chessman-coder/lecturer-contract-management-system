@@ -2,122 +2,79 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { CalendarCheck, FileText, Loader2 } from "lucide-react";
 import toast from "react-hot-toast";
 import axiosInstance from "../../lib/axios";
-import { listMajors } from "../../services/major.service";
 import { getGroups } from "../../services/group.service";
+import { getSpecializations } from "../../services/specialization.service";
 
 const weekDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
 const fallbackTimeSlots = [
-  "08:00 - 09:30",
-  "09:50 - 11:20",
-  "12:10 - 13:40",
-  "13:50 - 15:20",
-  "15:30 - 17:00",
+  "08h:00-09h:30",
+  "09h:50-11h:30",
+  "12h:10-13h:40",
+  "13h:50-15h:20",
+  "15h:30-17h:00",
 ];
 
-function normalizeName(value) {
-  return String(value || "")
-    .trim()
-    .toLowerCase();
-}
+const SESSION_TO_TIMESLOT = {
+  S1: "08h:00-09h:30",
+  S2: "09h:50-11h:30",
+  S3: "12h:10-13h:40",
+  S4: "13h:50-15h:20",
+  S5: "15h:30-17h:00",
+};
 
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function deriveAcademicYears(schedules) {
-  const years = new Set();
-  safeArray(schedules).forEach((schedule) => {
-    if (!schedule?.start_date) return;
-    const dt = new Date(schedule.start_date);
-    if (Number.isNaN(dt.getTime())) return;
-    const startYear = dt.getUTCFullYear();
-    years.add(`${startYear}-${startYear + 1}`);
+function parseAvailabilityToSlots(availability) {
+  const raw = String(availability || "").trim();
+  if (!raw) return [];
+
+  const out = [];
+  const dayBlocks = raw
+    .split(";")
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  dayBlocks.forEach((block) => {
+    const [dayPart, sessionsPart] = block
+      .split(":")
+      .map((part) => String(part || "").trim());
+    if (!dayPart || !sessionsPart) return;
+
+    const day = weekDays.find((d) => d.toLowerCase() === dayPart.toLowerCase());
+    if (!day) return;
+
+    sessionsPart
+      .split(",")
+      .map((s) => String(s || "").trim().toUpperCase())
+      .filter(Boolean)
+      .forEach((code) => {
+        const slot = SESSION_TO_TIMESLOT[code];
+        if (!slot) return;
+        out.push({ day, slot });
+      });
   });
-  return Array.from(years).sort((a, b) => b.localeCompare(a));
+
+  return out;
 }
 
-function scheduleMatchesAcademicYear(schedule, academicYear) {
-  if (!academicYear || academicYear === "all") return true;
-  if (!schedule?.start_date) return false;
-  const dt = new Date(schedule.start_date);
-  if (Number.isNaN(dt.getTime())) return false;
-  const startYear = dt.getUTCFullYear();
-  return `${startYear}-${startYear + 1}` === academicYear;
-}
-
-function getMajorAbbreviation(majorName) {
-  const raw = String(majorName || "").trim();
-  if (!raw) return "";
-
-  // Prefer explicit abbreviation in parentheses, e.g. "Software Engineering (SE)"
-  const parenMatch = raw.match(/\(([^)]+)\)/);
-  if (parenMatch?.[1]) {
-    return parenMatch[1].replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-  }
-
-  // Fallback: build from initials, e.g. "Data Science" -> "DS"
-  return raw
-    .split(/\s+/)
-    .map((word) => word.replace(/[^a-zA-Z0-9]/g, ""))
-    .filter(Boolean)
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase();
-}
-
-function parseTimeSlotMinutes(label) {
-  const raw = String(label || "").trim();
-  const match = raw.match(/(\d{1,2})h?:(\d{2})\s*-\s*(\d{1,2})h?:(\d{2})/);
-  if (!match) return 0;
-
-  const startMinutes = Number(match[1]) * 60 + Number(match[2]);
-  const endMinutes = Number(match[3]) * 60 + Number(match[4]);
-  const diff = endMinutes - startMinutes;
-  return diff > 0 ? diff : 0;
-}
-
-function getScheduleStats(schedule) {
-  const entries = safeArray(
-    schedule?.ScheduleEntries || schedule?.scheduleEntries || schedule?.entries,
+function getSpecializationName(classObj) {
+  return (
+    classObj?.Specialization?.name ||
+    classObj?.specialization?.name ||
+    classObj?.specialization_name ||
+    classObj?.specializationName ||
+    ""
   );
-
-  const courseKeys = new Set();
-  let totalMinutes = 0;
-
-  entries.forEach((entry) => {
-    const courseId = entry?.CourseMapping?.Course?.id;
-    const courseName = entry?.CourseMapping?.Course?.course_name;
-    const key = String(courseId || courseName || "").trim();
-    if (key) courseKeys.add(key);
-
-    const durationFromSlot = parseTimeSlotMinutes(entry?.TimeSlot?.label);
-    const durationFromField = Number(entry?.duration_minutes || 0);
-    totalMinutes +=
-      durationFromField > 0 ? durationFromField : durationFromSlot;
-  });
-
-  if (totalMinutes <= 0) {
-    const fallbackHours = Number(schedule?.total_hours || 0);
-    if (fallbackHours > 0) totalMinutes = fallbackHours * 60;
-  }
-
-  const totalHours = totalMinutes / 60;
-  const totalHoursLabel = Number.isInteger(totalHours)
-    ? String(totalHours)
-    : totalHours.toFixed(1);
-
-  return {
-    courses: courseKeys.size,
-    hoursLabel: totalMinutes > 0 ? totalHoursLabel : "0",
-  };
 }
 
 export default function ScheduleCreation() {
-  const [majors, setMajors] = useState([]);
+  const [specializations, setSpecializations] = useState([]);
   const [groups, setGroups] = useState([]);
-  const [schedules, setSchedules] = useState([]);
+  const [academicYears, setAcademicYears] = useState([]);
 
-  const [selectedMajor, setSelectedMajor] = useState("all");
+  const [selectedSpecialization, setSelectedSpecialization] = useState("all");
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("all");
   const [selectedGroupIds, setSelectedGroupIds] = useState([]);
 
@@ -130,76 +87,44 @@ export default function ScheduleCreation() {
   const [isGenerateAllLoading, setIsGenerateAllLoading] = useState(false);
   const [activeDownloadId, setActiveDownloadId] = useState(null);
   const [generatedCount, setGeneratedCount] = useState(0);
-  const [groupStatsById, setGroupStatsById] = useState({});
-
-  const scheduleByGroup = useMemo(() => {
-    const map = new Map();
-    safeArray(schedules).forEach((schedule) => {
-      const idKey = String(schedule?.Group?.id || "").trim();
-      const nameKey = normalizeName(schedule?.Group?.name);
-      const key = idKey || nameKey;
-      if (!key) return;
-      if (
-        !map.has(key) ||
-        String(schedule?.created_at || "") >
-          String(map.get(key)?.created_at || "")
-      ) {
-        map.set(key, schedule);
-      }
-    });
-    return map;
-  }, [schedules]);
-
-  const getScheduleForGroup = useCallback(
-    (group) => {
-      const byId = scheduleByGroup.get(String(group?.id || "").trim());
-      if (byId) return byId;
-      return scheduleByGroup.get(normalizeName(group?.name));
-    },
-    [scheduleByGroup],
-  );
 
   const academicYearOptions = useMemo(() => {
-    const years = deriveAcademicYears(schedules);
-    return ["all", ...years];
-  }, [schedules]);
+    return ["all", ...safeArray(academicYears)];
+  }, [academicYears]);
 
-  const selectedMajorName = useMemo(() => {
-    if (selectedMajor === "all") return "";
+  const selectedSpecializationName = useMemo(() => {
+    if (selectedSpecialization === "all") return "";
     return (
-      majors.find((m) => String(m.id) === String(selectedMajor))?.name || ""
+      specializations.find(
+        (s) => String(s.id) === String(selectedSpecialization),
+      )?.name || ""
     );
-  }, [majors, selectedMajor]);
+  }, [specializations, selectedSpecialization]);
 
   const visibleGroups = useMemo(() => {
-    const majorAbbr = getMajorAbbreviation(selectedMajorName);
     return safeArray(groups).filter((group) => {
-      const schedule = getScheduleForGroup(group);
-      const yearOk = scheduleMatchesAcademicYear(
-        schedule,
-        selectedAcademicYear,
-      );
-      if (!yearOk) return false;
-      if (!majorAbbr) return true;
-
-      const groupName = String(group?.name || "")
-        .trim()
-        .toUpperCase();
-      return groupName === majorAbbr || groupName.startsWith(`${majorAbbr}-`);
+      if (!selectedSpecializationName) return true;
+      const groupSpecName = getSpecializationName(group?.Class);
+      return String(groupSpecName).trim() === String(selectedSpecializationName).trim();
     });
-  }, [groups, selectedAcademicYear, selectedMajorName, getScheduleForGroup]);
+  }, [groups, selectedSpecializationName]);
 
   const loadPageData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [majorsRes, groupsRes, schedulesRes] = await Promise.all([
-        listMajors(),
+      const [specRes, groupsRes, yearsRes] = await Promise.all([
+        getSpecializations(),
         getGroups(),
-        axiosInstance.get("/schedules"),
+        axiosInstance.get("/course-mappings/academic-years"),
       ]);
-      setMajors(safeArray(majorsRes));
+      const specPayload = specRes?.data;
+      setSpecializations(
+        Array.isArray(specPayload)
+          ? specPayload
+          : safeArray(specPayload?.data),
+      );
       setGroups(safeArray(groupsRes?.data?.group));
-      setSchedules(safeArray(schedulesRes?.data?.schedules));
+      setAcademicYears(safeArray(yearsRes?.data?.data));
     } catch (error) {
       console.error("[ScheduleCreation] failed to load page data", error);
       toast.error("Failed to load schedule data");
@@ -218,115 +143,42 @@ export default function ScheduleCreation() {
     );
   }, [visibleGroups]);
 
-  useEffect(() => {
-    let isActive = true;
-
-    const fetchVisibleGroupStats = () => {
-      if (!visibleGroups.length) {
-        if (isActive) setGroupStatsById({});
-        return;
-      }
-
-      const nextStats = {};
-
-      visibleGroups.forEach((group) => {
-        const schedule = getScheduleForGroup(group);
-        const groupId = group?.id;
-        if (!groupId) return;
-
-        if (!schedule?.id) {
-          nextStats[groupId] = { courses: 0, hoursLabel: "0" };
-          return;
-        }
-
-        nextStats[groupId] = getScheduleStats(schedule);
-      });
-
-      if (isActive) {
-        setGroupStatsById(nextStats);
-      }
-    };
-
-    fetchVisibleGroupStats();
-
-    return () => {
-      isActive = false;
-    };
-  }, [visibleGroups, getScheduleForGroup]);
-
-  const buildPreviewFromSchedule = useCallback((scheduleDetail) => {
-    const entries = safeArray(
-      scheduleDetail?.ScheduleEntries ||
-        scheduleDetail?.scheduleEntries ||
-        scheduleDetail?.entries,
-    );
-
-    const slotOrderMap = new Map();
-    entries.forEach((entry) => {
-      const label = entry?.TimeSlot?.label;
-      if (!label) return;
-      const index = Number(entry?.TimeSlot?.order_index ?? 9999);
-      slotOrderMap.set(label, index);
-    });
-
-    const orderedSlots = Array.from(slotOrderMap.entries())
-      .sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
-      .map(([label]) => label);
-
-    const slotList = orderedSlots.length ? orderedSlots : fallbackTimeSlots;
-    const grid = {};
-
-    entries.forEach((entry) => {
-      const slot = entry?.TimeSlot?.label;
-      const day = entry?.day_of_week;
-      if (!slot || !day) return;
-      const course =
-        entry?.CourseMapping?.Course?.course_name || "Unknown Course";
-      const teacherTitle = entry?.CourseMapping?.LecturerProfile?.title || "";
-      let teacherName =
-        entry?.CourseMapping?.LecturerProfile?.full_name_english || "";
-      // Avoid double title
-      let teacherDisplay = teacherName;
-      if (
-        teacherTitle &&
-        teacherName &&
-        !teacherName
-          .trim()
-          .toLowerCase()
-          .startsWith(teacherTitle.trim().toLowerCase())
-      ) {
-        teacherDisplay = `${teacherTitle} ${teacherName}`.trim();
-      }
-      const room = entry?.room || "TBA";
-
-      if (!grid[slot]) grid[slot] = {};
-      grid[slot][day] = {
-        course,
-        teacher: teacherDisplay || "TBA",
-        room,
-      };
-    });
-
-    setPreviewTimeSlots(slotList);
-    setPreviewCells(grid);
-  }, []);
-
   const handlePreviewGroup = useCallback(
     async (group) => {
-      const schedule = getScheduleForGroup(group);
-      if (!schedule?.id) {
-        setPreviewGroupName(group?.name || "");
-        setPreviewCells({});
-        setPreviewTimeSlots(fallbackTimeSlots);
-        toast.error("No schedule found for this group");
-        return;
-      }
-
       setIsPreviewLoading(true);
       try {
-        const { data } = await axiosInstance.get(`/schedules/${schedule.id}`);
-        buildPreviewFromSchedule(data?.schedule || {});
         setPreviewGroupName(group?.name || "");
+
+        const params = {
+          group_id: group?.id,
+          status: "Accepted",
+          limit: 100,
+          academic_year:
+            selectedAcademicYear !== "all" ? selectedAcademicYear : undefined,
+        };
+
+        const { data } = await axiosInstance.get("/course-mappings", { params });
+        const mappings = safeArray(data?.data);
+
+        const grid = {};
+        mappings.forEach((mapping) => {
+          const course = mapping?.course?.name || "Unknown Course";
+          const teacher = mapping?.lecturer?.name || "TBA";
+          const room =
+            mapping?.theory_room_number ||
+            mapping?.lab_room_number ||
+            mapping?.room_number ||
+            "TBA";
+
+          parseAvailabilityToSlots(mapping?.availability).forEach(({ day, slot }) => {
+            if (!grid[slot]) grid[slot] = {};
+            if (!grid[slot][day]) grid[slot][day] = [];
+            grid[slot][day].push({ course, teacher, room });
+          });
+        });
+
+        setPreviewTimeSlots(fallbackTimeSlots);
+        setPreviewCells(grid);
       } catch (error) {
         console.error("[ScheduleCreation] failed to preview schedule", error);
         toast.error("Failed to load schedule preview");
@@ -334,12 +186,11 @@ export default function ScheduleCreation() {
         setIsPreviewLoading(false);
       }
     },
-    [buildPreviewFromSchedule, getScheduleForGroup],
+    [selectedAcademicYear],
   );
 
-  const downloadSchedulePdf = useCallback(async (params, filename) => {
-    const response = await axiosInstance.get("/schedules/pdf", {
-      params,
+  const downloadGeneratedSchedulePdf = useCallback(async (filename) => {
+    const response = await axiosInstance.get("/schedules/generated-pdf", {
       responseType: "blob",
     });
 
@@ -360,11 +211,13 @@ export default function ScheduleCreation() {
       const groupKey = `group-${group?.id}`;
       setActiveDownloadId(groupKey);
       try {
-        await downloadSchedulePdf(
-          {
-            class_name: group?.Class?.name || undefined,
-            specialization: group?.Class?.Specialization?.name || undefined,
-          },
+        await axiosInstance.post("/schedules/generate-html", {
+          academic_year:
+            selectedAcademicYear !== "all" ? selectedAcademicYear : undefined,
+          group_ids: [group?.id].filter(Boolean),
+        });
+
+        await downloadGeneratedSchedulePdf(
           `schedule-${String(group?.name || "group")
             .replace(/\s+/g, "-")
             .toLowerCase()}.pdf`,
@@ -377,31 +230,42 @@ export default function ScheduleCreation() {
         setActiveDownloadId(null);
       }
     },
-    [downloadSchedulePdf],
+    [downloadGeneratedSchedulePdf, selectedAcademicYear],
   );
 
   const handleGenerateAll = useCallback(async () => {
     setIsGenerateAllLoading(true);
     try {
-      const normalizedSpecialization =
-        typeof selectedMajorName === "string"
-          ? selectedMajorName.replace(/\s*\([^)]*\)\s*$/, "").trim()
-          : undefined;
+      const groupIds =
+        selectedGroupIds.length > 0
+          ? selectedGroupIds
+          : visibleGroups.map((g) => g.id);
 
-      await downloadSchedulePdf(
-        {
-          specialization: normalizedSpecialization || undefined,
-        },
-        "all-schedules.pdf",
-      );
-      setGeneratedCount((prev) => prev + Math.max(selectedGroupIds.length, 1));
+      await axiosInstance.post("/schedules/generate-html", {
+        academic_year:
+          selectedAcademicYear !== "all" ? selectedAcademicYear : undefined,
+        specialization_id:
+          selectedSpecialization !== "all"
+            ? Number(selectedSpecialization)
+            : undefined,
+        group_ids: groupIds.length > 0 ? groupIds : undefined,
+      });
+
+      await downloadGeneratedSchedulePdf("all-schedules.pdf");
+      setGeneratedCount((prev) => prev + Math.max(groupIds.length, 1));
     } catch (error) {
       console.error("[ScheduleCreation] failed to generate all PDFs", error);
       toast.error("Failed to generate all PDFs");
     } finally {
       setIsGenerateAllLoading(false);
     }
-  }, [downloadSchedulePdf, selectedGroupIds.length, selectedMajorName]);
+  }, [
+    downloadGeneratedSchedulePdf,
+    selectedAcademicYear,
+    selectedGroupIds,
+    selectedSpecialization,
+    visibleGroups,
+  ]);
 
   const toggleGroupSelection = useCallback((groupId) => {
     setSelectedGroupIds((prev) =>
@@ -474,17 +338,17 @@ export default function ScheduleCreation() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Major
+                  Specialization
                 </label>
                 <select
-                  value={selectedMajor}
-                  onChange={(e) => setSelectedMajor(e.target.value)}
+                  value={selectedSpecialization}
+                  onChange={(e) => setSelectedSpecialization(e.target.value)}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                 >
-                  <option value="all">All Majors</option>
-                  {safeArray(majors).map((major) => (
-                    <option key={major.id} value={String(major.id)}>
-                      {major.name}
+                  <option value="all">All Specializations</option>
+                  {safeArray(specializations).map((spec) => (
+                    <option key={spec.id} value={String(spec.id)}>
+                      {spec.name}
                     </option>
                   ))}
                 </select>
@@ -495,8 +359,8 @@ export default function ScheduleCreation() {
                   Bulk Generation
                 </h2>
                 <p className="mt-3 text-xs text-slate-500">
-                  All visible groups matching the selected filters will be
-                  included when generating PDFs.
+                  All visible groups will be included when generating PDFs.
+                  Academic Year affects the generated schedule content.
                 </p>
               </div>
 
@@ -513,8 +377,6 @@ export default function ScheduleCreation() {
                     </div>
                   ) : (
                     visibleGroups.map((group) => {
-                      const schedule = getScheduleForGroup(group);
-                      const stats = groupStatsById[group.id];
                       const isSelected = selectedGroupIds.includes(group.id);
                       return (
                         <div
@@ -540,13 +402,7 @@ export default function ScheduleCreation() {
 
                           <div className="mt-3 space-y-1 text-xs text-slate-500">
                             <p>{group?.num_of_student || 0} students</p>
-                            <p>
-                              {schedule
-                                ? stats
-                                  ? `${stats.courses} courses | ${stats.hoursLabel} hours`
-                                  : "Loading course/hour stats..."
-                                : "Schedule: Not created yet"}
-                            </p>
+                            <p>Schedule source: Accepted course mappings</p>
                           </div>
 
                           <div className="mt-3 flex gap-2">
@@ -640,22 +496,24 @@ export default function ScheduleCreation() {
                             key={`${slot}-${day}`}
                             className="relative h-28 border border-slate-200 px-2 py-2 text-center align-top w-[160px]"
                           >
-                            {cell ? (
-                              <>
-                                <div className="mx-auto max-w-[150px] space-y-1 text-slate-700">
-                                  <p className="text-sm font-bold leading-4">
-                                    {cell.course}
-                                  </p>
-                                  <p className="text-[13px] text-slate-600">
-                                    {cell.teacher}
-                                  </p>
-                                </div>
-                                {cell.room && (
-                                  <span className="absolute bottom-2 right-2 text-[13px] text-slate-700 font-semibold">
-                                    {cell.room}
-                                  </span>
-                                )}
-                              </>
+                            {Array.isArray(cell) && cell.length > 0 ? (
+                              <div className="mx-auto max-w-[150px] space-y-3 text-slate-700">
+                                {cell.map((item, idx) => (
+                                  <div key={idx} className="space-y-1">
+                                    <p className="text-sm font-bold leading-4">
+                                      {item.course}
+                                    </p>
+                                    <p className="text-[13px] text-slate-600">
+                                      {item.teacher}
+                                    </p>
+                                    {item.room ? (
+                                      <p className="text-[13px] text-slate-700 font-semibold">
+                                        {item.room}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                ))}
+                              </div>
                             ) : null}
                           </td>
                         );
