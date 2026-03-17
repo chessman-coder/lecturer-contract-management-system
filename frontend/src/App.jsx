@@ -69,32 +69,32 @@ function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-        {/* Superadmin */}
-        <Route
-          path="/superadmin"
-          element={
-            <RequireRole allowed={["superadmin"]}>
-              <SuperAdminDashboard />
-            </RequireRole>
-          }
-        />
-        <Route
-          path="/superadmin/users"
-          element={
-            <RequireRole allowed={["superadmin"]}>
-              <UserManagement />
-            </RequireRole>
-          }
-        />
+          {/* Superadmin */}
+          <Route
+            path="/superadmin"
+            element={
+              <RequireRole allowed={["superadmin"]}>
+                <SuperAdminDashboard />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/superadmin/users"
+            element={
+              <RequireRole allowed={["superadmin"]}>
+                <UserManagement />
+              </RequireRole>
+            }
+          />
 
-        <Route
-          path="/superadmin/profile"
-          element={
-            <RequireRole allowed={["superadmin"]}>
-              <SuperAdminProfile />
-            </RequireRole>
-          }
-        />
+          <Route
+            path="/superadmin/profile"
+            element={
+              <RequireRole allowed={["superadmin"]}>
+                <SuperAdminProfile />
+              </RequireRole>
+            }
+          />
 
           {/* Admin + Nested routes */}
           <Route
@@ -115,34 +115,35 @@ function App() {
             <Route path="contracts" element={<ContractGeneration />} />
           </Route>
 
-        {/* Lecturer + Nested routes */}
-        <Route
-          path="/lecturer"
-          element={
-            <RequireRole allowed={["lecturer"]}>
-              <LecturerDashboardLayout />
-            </RequireRole>
-          }
-        >
-          <Route index element={<LecturerDashboard />} />
-          <Route path="profile" element={<LecturerProfile />} />
-          <Route path="my-contracts" element={<LecturerContracts />} />
-        </Route>
+          {/* Lecturer + Nested routes */}
+          <Route
+            path="/lecturer"
+            element={
+              <RequireRole allowed={["lecturer"]}>
+                <LecturerDashboardLayout />
+              </RequireRole>
+            }
+          >
+            <Route index element={<LecturerDashboard />} />
+            <Route path="profile" element={<LecturerProfile />} />
+            <Route path="my-contracts" element={<LecturerContracts />} />
+            <Route path="schedule" element={<LecturerSchedule />} />
+          </Route>
 
-        {/* Advisor + Nested routes (same panel UX as lecturer, but different profile settings design) */}
-        <Route
-          path="/advisor"
-          element={
-            <RequireRole allowed={["advisor"]}>
-              <LecturerDashboardLayout />
-            </RequireRole>
-          }
-        >
-          <Route index element={<AdvisorDashboard />} />
-          <Route path="profile" element={<AdvisorProfile />} />
-          <Route path="my-contracts" element={<LecturerContracts />} />
-        </Route>
-        <Route path="/onboarding" element={<Onboarding />} />
+          {/* Advisor + Nested routes (same panel UX as lecturer, but different profile settings design) */}
+          <Route
+            path="/advisor"
+            element={
+              <RequireRole allowed={["advisor"]}>
+                <LecturerDashboardLayout />
+              </RequireRole>
+            }
+          >
+            <Route index element={<AdvisorDashboard />} />
+            <Route path="profile" element={<AdvisorProfile />} />
+            <Route path="my-contracts" element={<LecturerContracts />} />
+          </Route>
+          <Route path="/onboarding" element={<Onboarding />} />
 
           {/* Management + Nested routes */}
           <Route
