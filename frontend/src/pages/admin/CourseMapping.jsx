@@ -4,6 +4,7 @@ import Button from '../../components/ui/Button.jsx';
 import CourseMappingFilters from '../../components/admin/courseMapping/CourseMappingFilters.jsx';
 import ClassGroupCard from '../../components/admin/courseMapping/ClassGroupCard.jsx';
 import MappingFormDialog from '../../components/admin/courseMapping/MappingFormDialog.jsx';
+import EditMappingFormDialog from '../../components/admin/courseMapping/EditMappingFormDialog.jsx';
 import DeleteConfirmDialog from '../../components/admin/courseMapping/DeleteConfirmDialog.jsx';
 import { useCourseMappingData } from '../../hooks/admin/courseMapping/useCourseMappingData.js';
 import { useTeachingType } from '../../hooks/admin/courseMapping/useTeachingType.js';
@@ -412,6 +413,14 @@ export default function CourseMappingPage() {
 
       const rowsForEdit = Array.isArray(editing?._rowsForEdit) ? editing._rowsForEdit : [];
       const isGroupMode = rowsForEdit.some((r) => r?.group_id);
+      const theoryGroupIds = Array.isArray(form.theory_group_ids) ? form.theory_group_ids : [];
+      const labGroupIds = Array.isArray(form.lab_group_ids) ? form.lab_group_ids : [];
+      const theoryRoomByGroupRaw =
+        form.theory_room_by_group && typeof form.theory_room_by_group === 'object'
+          ? form.theory_room_by_group
+          : {};
+      const labRoomByGroupRaw =
+        form.lab_room_by_group && typeof form.lab_room_by_group === 'object' ? form.lab_room_by_group : {};
       const assignmentsByGroupRaw =
         form.availability_assignments_by_group && typeof form.availability_assignments_by_group === 'object'
           ? form.availability_assignments_by_group
@@ -432,14 +441,39 @@ export default function CourseMappingPage() {
         lecturer_profile_id: form.lecturer_profile_id,
         status: form.status,
         contacted_by: form.contacted_by,
-        room_number: (form.room_number || '').toUpperCase(),
-        theory_room_number: (form.theory_room_number || '').toUpperCase(),
-        lab_room_number: (form.lab_room_number || '').toUpperCase(),
         comment: (form.comment || '').slice(0, 160),
         ...teachingPayload,
       };
 
       if (isGroupMode) {
+        payload.theory_room_by_group = (() => {
+          const selected = new Set(
+            theoryGroupIds
+              .map((x) => parseInt(String(x), 10))
+              .filter((n) => Number.isInteger(n) && n > 0)
+              .map(String)
+          );
+          const out = {};
+          for (const gid of selected) {
+            const san = String(theoryRoomByGroupRaw[gid] || '').trim().slice(0, 50).toUpperCase();
+            if (san) out[gid] = san;
+          }
+          return out;
+        })();
+        payload.lab_room_by_group = (() => {
+          const selected = new Set(
+            labGroupIds
+              .map((x) => parseInt(String(x), 10))
+              .filter((n) => Number.isInteger(n) && n > 0)
+              .map(String)
+          );
+          const out = {};
+          for (const gid of selected) {
+            const san = String(labRoomByGroupRaw[gid] || '').trim().slice(0, 50).toUpperCase();
+            if (san) out[gid] = san;
+          }
+          return out;
+        })();
         if (hasAnyAssignedSessions) {
           payload.availability_assignments_by_group = assignmentsByGroupRaw;
         } else if (hadAnyAssignedSessionsBefore) {
@@ -453,6 +487,9 @@ export default function CourseMappingPage() {
           payload.availability = form.availability || '';
         }
       } else {
+        payload.room_number = (form.room_number || '').toUpperCase();
+        payload.theory_room_number = (form.theory_room_number || '').toUpperCase();
+        payload.lab_room_number = (form.lab_room_number || '').toUpperCase();
         payload.availability = form.availability || '';
       }
 
@@ -589,7 +626,6 @@ export default function CourseMappingPage() {
         <MappingFormDialog
           isOpen={addOpen}
           onClose={() => setAddOpen(false)}
-          mode="add"
           form={form}
           setForm={setForm}
           onSubmit={submitAdd}
@@ -604,8 +640,7 @@ export default function CourseMappingPage() {
           teachingType={teachingTypeAdd}
         />
 
-        {/* Edit Mapping Dialog */}
-        <MappingFormDialog
+        <EditMappingFormDialog
           isOpen={editOpen}
           onClose={() => {
             setEditOpen(false);
@@ -621,8 +656,6 @@ export default function CourseMappingPage() {
           lecturers={lecturers}
           classMap={classMap}
           courseMap={courseMap}
-          academicYearOptions={academicYearOptions}
-          reloadForAcademicYear={reloadForAcademicYear}
           teachingType={teachingTypeEdit}
         />
       </div>

@@ -9,7 +9,6 @@ import { useMappingGroups } from '../../../hooks/admin/courseMapping/useMappingG
 import { useMappingValidation } from '../../../hooks/admin/courseMapping/useMappingValidation.js';
 import { useTeachingTypeGroupSync } from '../../../hooks/admin/courseMapping/useTeachingTypeGroupSync.js';
 
-import AddMappingFields from './mappingForm/AddMappingFields.jsx';
 import LecturerField from './mappingForm/LecturerField.jsx';
 import AvailabilityField from './mappingForm/AvailabilityField.jsx';
 import StatusField from './mappingForm/StatusField.jsx';
@@ -19,9 +18,9 @@ import ClientErrorsAlert from './mappingForm/ClientErrorsAlert.jsx';
 import SessionGroupsCard from './mappingForm/SessionGroupsCard.jsx';
 
 /**
- * MappingFormDialog - Add course mapping form
+ * EditMappingFormDialog - Edit course mapping form
  */
-export default function MappingFormDialog({
+export default function EditMappingFormDialog({
   isOpen,
   onClose,
   form,
@@ -33,9 +32,7 @@ export default function MappingFormDialog({
   lecturers,
   classMap,
   courseMap,
-  academicYearOptions,
-  reloadForAcademicYear,
-  teachingType, // useTeachingType hook instance passed from parent
+  teachingType,
 }) {
   const getClassSpecializationName = useCallback((classItem) => {
     if (!classItem) return '';
@@ -48,19 +45,19 @@ export default function MappingFormDialog({
     );
   }, []);
 
-  const {
-    yearLevelOptionsForAY,
-    termOptionsForAYLevel,
-    classesForSelection,
-    allowedCourses,
-    filteredLecturers,
-    selectedClass,
-  } = useMappingCascades({ form, classes, courses, lecturers, classMap, courseMap });
+  const { filteredLecturers, selectedClass } = useMappingCascades({
+    form,
+    classes,
+    courses,
+    lecturers,
+    classMap,
+    courseMap,
+  });
 
   const { groupsForSelectedClass } = useMappingGroups({
     selectedClass,
     form,
-    isEditMode: false,
+    isEditMode: true,
   });
 
   const availability = useMappingAvailabilityPopover({
@@ -142,7 +139,7 @@ export default function MappingFormDialog({
 
   const { clientErrors, handleSubmit } = useMappingValidation({
     isOpen,
-    isEditMode: false,
+    isEditMode: true,
     form,
     groupsForSelectedClass,
     teachingType,
@@ -193,10 +190,7 @@ export default function MappingFormDialog({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="w-[95vw] sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>New Mapping</DialogTitle>
-          <p className="mt-1 text-sm text-gray-500">
-            Create a new course assignment by selecting the academic year, class, course, lecturer, availability, and teaching type.
-          </p>
+          <DialogTitle>Edit Mapping</DialogTitle>
         </DialogHeader>
 
         {error && (
@@ -213,20 +207,7 @@ export default function MappingFormDialog({
         <div className="max-h-[80vh] sm:max-h-[70vh] overflow-y-auto px-2">
           <div className="w-full max-w-2xl mx-auto">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 auto-rows-min text-sm">
-              <AddMappingFields
-                form={form}
-                setForm={setForm}
-                academicYearOptions={academicYearOptions}
-                reloadForAcademicYear={reloadForAcademicYear}
-                yearLevelOptionsForAY={yearLevelOptionsForAY}
-                termOptionsForAYLevel={termOptionsForAYLevel}
-                classesForSelection={classesForSelection}
-                classMap={classMap}
-                allowedCourses={allowedCourses}
-                getClassSpecializationName={getClassSpecializationName}
-              />
-
-              <LecturerField isEditMode={false} form={form} setForm={setForm} filteredLecturers={filteredLecturers} />
+              <LecturerField isEditMode={true} form={form} setForm={setForm} filteredLecturers={filteredLecturers} />
 
               <TeachingTypeSelector
                 theorySelected={teachingType.theorySelected}
@@ -254,7 +235,6 @@ export default function MappingFormDialog({
               <AvailabilityField {...availability} form={form} setForm={setForm} />
               <StatusField form={form} setForm={setForm} />
 
-              {/* Theory/Lab Room (bulk edit for no-group/legacy rows) */}
               {form.class_id && groupsForSelectedClass.length === 0 && (
                 <>
                   <div className="col-span-1 flex flex-col min-w-0">
@@ -293,17 +273,11 @@ export default function MappingFormDialog({
                       placeholder="B105"
                     />
                   </div>
-
-                  {groupsForSelectedClass.length === 0 && (
-                    <div className="col-span-1 sm:col-span-2">
-                      <p className="mt-1 text-xs text-gray-500">No groups found for this class; rooms are saved on the course mapping.</p>
-                    </div>
-                  )}
                 </>
               )}
 
               <ContactFields form={form} setForm={setForm} />
-              <ActionButtons isEditMode={false} onClose={onClose} onSubmit={handleSubmit} />
+              <ActionButtons isEditMode={true} onClose={onClose} onSubmit={handleSubmit} />
             </div>
           </div>
         </div>

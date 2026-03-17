@@ -2,6 +2,30 @@ import { useState } from "react";
 import { createClass, upgradeClass, updateClass, deleteClass } from "../../../services/class.service";
 import { createGroup, updateGroup, deleteGroup } from "../../../services/group.service";
 
+const normalizeGroupShape = (group, fallbackClassId = null) => {
+  if (!group) return null;
+
+  const parsedStudents = Number.parseInt(String(group.num_of_student ?? ''), 10);
+
+  return {
+    ...group,
+    class_id: group.class_id ?? fallbackClassId,
+    num_of_student: Number.isFinite(parsedStudents) ? parsedStudents : group.num_of_student,
+  };
+};
+
+const attachGroupsToClass = (classItem, groups = []) => {
+  const normalizedGroups = groups
+    .map((group) => normalizeGroupShape(group, classItem?.id ?? null))
+    .filter(Boolean);
+
+  return {
+    ...classItem,
+    Groups: normalizedGroups,
+    groups: normalizedGroups,
+  };
+};
+
 const initialClassState = {
   name: "",
   specialization: "",
@@ -213,8 +237,8 @@ export function useClassManagement(classes, setClasses) {
 
       // Attach groups for immediate display
       const createdWithGroups = createdGroups.length
-        ? { ...createdClass, Groups: createdGroups }
-        : createdClass;
+        ? attachGroupsToClass(createdClass, createdGroups)
+        : attachGroupsToClass(createdClass, []);
 
       setClasses(prev => [createdWithGroups, ...prev]);
       setIsUpgradeDialogOpen(false);
@@ -275,8 +299,9 @@ export function useClassManagement(classes, setClasses) {
 
       // Create groups after class is created
       const createdClass = res.data;
+      let createdGroups = [];
       if (createdClass?.id) {
-        await Promise.all(
+        const groupResults = await Promise.all(
           groups.map((g) =>
             createGroup({
               class_id: createdClass.id,
@@ -285,12 +310,17 @@ export function useClassManagement(classes, setClasses) {
             })
           )
         );
+        createdGroups = groupResults
+          .map((result) => result?.data?.group)
+          .filter(Boolean);
       }
 
-      setClasses(prev => [...prev, createdClass]);
+      const createdWithGroups = attachGroupsToClass(createdClass, createdGroups);
+
+      setClasses(prev => [...prev, createdWithGroups]);
       setIsAddDialogOpen(false);
       setNewClass(initialClassState);
-      return createdClass;
+      return createdWithGroups;
     } catch (err) {
       const errorMessage = err.response?.data?.message || err.message || "Failed to add class. Please try again.";
       throw new Error(errorMessage);
@@ -352,7 +382,7 @@ export function useClassManagement(classes, setClasses) {
       const nextIds = new Set(groups.map((g) => String(g?.id || '')).filter(Boolean));
       const removed = originalGroups.filter((g) => g?.id && !nextIds.has(String(g.id)));
 
-      await Promise.all([
+      const groupResults = await Promise.all([
         ...groups.map((g) => {
           const body = {
             class_id: editingClass.id,
@@ -364,10 +394,20 @@ export function useClassManagement(classes, setClasses) {
         ...removed.map((g) => deleteGroup(g.id)),
       ]);
 
-      setClasses(prev => prev.map(c => c.id === editingClass.id ? res.data : c));
+      const syncedGroups = groups
+        .map((group, index) => {
+          const payload = groupResults[index]?.data;
+          return payload?.group || payload?.existingGroup || group;
+        })
+        .map((group) => normalizeGroupShape(group, editingClass.id))
+        .filter(Boolean);
+
+      const updatedClass = attachGroupsToClass(res.data, syncedGroups);
+
+      setClasses(prev => prev.map(c => c.id === editingClass.id ? updatedClass : c));
       setIsEditDialogOpen(false);
       setEditingClass(null);
-      return res.data;
+      return updatedClass;
     } catch (err) {
       const errorMessage = err.response?.data?.message || err.message || "Failed to update class. Please try again.";
       throw new Error(errorMessage);
