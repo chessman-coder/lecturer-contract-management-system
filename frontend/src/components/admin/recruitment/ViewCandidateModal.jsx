@@ -10,8 +10,6 @@ export default function ViewCandidateModal({
   categories,
   candidateResponses
 }) {
-  if (!isOpen || !candidate) return null;
-
   useEffect(() => {
     if (!isOpen) return;
 
@@ -22,6 +20,8 @@ export default function ViewCandidateModal({
       document.body.style.overflow = originalOverflow;
     };
   }, [isOpen]);
+
+  if (!isOpen || !candidate) return null;
 
   return createPortal(
     <div
