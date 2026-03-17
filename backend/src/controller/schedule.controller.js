@@ -1203,7 +1203,8 @@ export const generateFilteredSchedulePDF = async (req, res) => {
 };
 
 // POST /api/schedules/generate-html
-// Generates schedule HTML from accepted CourseMappings and saves it as uploads/schedules/schedule.html
+// Generates schedule HTML from accepted CourseMappings, saves it as a unique file (e.g. uploads/schedules/schedule-<id>.html),
+// and returns `file`/`filename` that must be used in the subsequent PDF generation request.
 export const generateFilteredScheduleHTML = async (req, res) => {
   try {
     const academicYear = String(req.body?.academic_year || '').trim();
