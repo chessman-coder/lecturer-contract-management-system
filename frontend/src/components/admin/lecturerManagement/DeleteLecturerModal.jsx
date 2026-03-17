@@ -23,6 +23,11 @@ export default function DeleteLecturerModal({
 
   if (!isOpen || !lecturer) return null;
 
+  const handleCancel = () => {
+    if (isDeleting) return;
+    onCancel();
+  };
+
   const handleConfirm = async () => {
     setIsDeleting(true);
     await onConfirm();
@@ -31,7 +36,7 @@ export default function DeleteLecturerModal({
 
   return createPortal(
     <div className="fixed inset-0 z-50">
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={handleCancel} />
       <div className="relative flex min-h-screen items-center justify-center p-4">
         <div className="w-full max-w-md rounded-2xl border border-white/60 bg-white p-6 shadow-2xl">
           <div className="mb-6 text-center">
@@ -46,7 +51,7 @@ export default function DeleteLecturerModal({
 
           <div className="flex gap-3">
             <button
-              onClick={onCancel}
+              onClick={handleCancel}
               disabled={isDeleting}
               className="flex-1 rounded-xl border-2 border-slate-200 bg-white px-4 py-3 font-semibold text-slate-700 transition-all duration-200 hover:bg-slate-50 disabled:opacity-50"
             >
