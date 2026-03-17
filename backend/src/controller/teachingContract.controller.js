@@ -116,6 +116,21 @@ async function isContractInManagerDept(contractId, req) {
   return count > 0;
 }
 
+async function requireOwnedTeachingContract(req, res, contractId, options = {}) {
+  const contract = await TeachingContract.findByPk(contractId, options);
+  if (!contract) {
+    res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    return null;
+  }
+
+  if (Number(contract.lecturer_user_id) !== Number(req.user?.id)) {
+    res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    return null;
+  }
+
+  return contract;
+}
+
 export async function createDraftContract(req, res) {
   try {
     const { lecturer_user_id, academic_year, term, year_level, start_date, end_date } = req.body;
@@ -291,6 +306,11 @@ export async function createDraftContract(req, res) {
 export async function getContract(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const ownedContract = await requireOwnedTeachingContract(req, res, id, {
+      attributes: ['id', 'lecturer_user_id'],
+    });
+    if (!ownedContract) return;
+
     const contract = await TeachingContract.findByPk(id, {
       include: [
         { 
@@ -314,11 +334,6 @@ export async function getContract(req, res) {
       ],
     });
     if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-    // Admin/Management access control: only contracts with at least one course in their department
-    if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
     return res.json(contract);
   } catch (e) {
     console.error('[getContract]', e);
@@ -355,11 +370,8 @@ export async function listContracts(req, res) {
       where.status = CONTRACT_STATUS_ALIAS_MAP[s] || s;
     }
 
-    // Role-based scoping: lecturers only see their own contracts
-    const role = req.user?.role;
-    if (role === 'lecturer') {
-      where.lecturer_user_id = req.user.id;
-    }
+    // Only the contract owner may access teaching contracts.
+    where.lecturer_user_id = req.user.id;
 
     // We'll use include joins for admin scoping instead of raw EXISTS to avoid alias issues
     const Sequelize = (await import('sequelize')).default;
@@ -390,28 +402,6 @@ export async function listContracts(req, res) {
         ],
       },
     ];
-
-    // If admin, require at least one course in their department and only return those course rows
-    if (role === 'admin' || role === 'management') {
-      const deptId = await resolveManagerDeptId(req);
-      if (!deptId) {
-        return res.json({ data: [], page, limit, total: 0 });
-      }
-      include[0] = {
-        model: TeachingContractCourse,
-        as: 'contractCourses',
-        required: true,
-        include: [
-          {
-            model: Course,
-            required: true,
-            where: { dept_id: deptId },
-            attributes: ['id', 'dept_id', 'course_code', 'course_name'],
-            include: [{ model: Department, required: false, attributes: ['id', 'dept_name'] }],
-          },
-        ],
-      };
-    }
 
     // Basic text search on lecturer fields
     if (q) {
@@ -544,6 +534,11 @@ export async function listContracts(req, res) {
 export async function generatePdf(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const ownedContract = await requireOwnedTeachingContract(req, res, id, {
+      attributes: ['id', 'lecturer_user_id'],
+    });
+    if (!ownedContract) return;
+
     const contract = await TeachingContract.findByPk(id, {
       include: [
         {
@@ -572,11 +567,6 @@ export async function generatePdf(req, res) {
       ],
     });
     if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-    // Admin/Management access control
-    if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
 
     let htmlEn = loadTemplate('lecturer_contract.html');
     let htmlKh = loadTemplate('khmer_contract.html');
@@ -801,16 +791,9 @@ export async function updateStatus(req, res) {
       CONTRACT_STATUS_ALIAS_MAP[String(statusRaw || '').trim().toUpperCase()] ||
       String(statusRaw || '').trim();
     // Validation handled by middleware; status is already safe
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const contract = await requireOwnedTeachingContract(req, res, id);
+    if (!contract) return;
     const role = String(req.user?.role || '').toLowerCase();
-    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
 
     // Completed contracts are immutable status-wise
     if (contract.status === 'COMPLETED' && status !== 'COMPLETED') {
@@ -914,17 +897,10 @@ export async function updateStatus(req, res) {
 export async function listRedoRequests(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-
-    const role = String(req.user?.role || '').toLowerCase();
-    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(role)) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
+    const contract = await requireOwnedTeachingContract(req, res, id, {
+      attributes: ['id', 'lecturer_user_id'],
+    });
+    if (!contract) return;
 
     const rows = await ContractRedoRequest.findAll({
       where: { contract_id: id },
@@ -946,17 +922,10 @@ export async function createRedoRequest(req, res) {
     const body = req.validated?.body || req.body || {};
     const message = String(body.message || '').trim();
 
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const contract = await requireOwnedTeachingContract(req, res, id);
+    if (!contract) return;
 
     const role = String(req.user?.role || '').toLowerCase();
-    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (role === 'management' || role === 'admin') {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
 
     const requesterRole = role === 'lecturer' ? 'LECTURER' : 'MANAGEMENT';
 
@@ -1011,17 +980,8 @@ export async function updateRedoRequestStatus(req, res) {
     const body = req.validated?.body || req.body || {};
     const { resolved } = body;
 
-    const contract = await TeachingContract.findByPk(contractId);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-
-    const role = String(req.user?.role || '').toLowerCase();
-    if (role === 'lecturer') {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(role)) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
+    const contract = await requireOwnedTeachingContract(req, res, contractId);
+    if (!contract) return;
 
     const row = await ContractRedoRequest.findOne({
       where: { id: requestId, contract_id: contractId },
@@ -1048,20 +1008,10 @@ export async function editContract(req, res) {
     const id = parseInt(req.params.id, 10);
     const body = req.validated?.body || req.body || {};
 
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const contract = await requireOwnedTeachingContract(req, res, id);
+    if (!contract) return;
 
     const role = String(req.user?.role || '').toLowerCase();
-    if (role !== 'admin') {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (role === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(role)) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
 
     if (contract.status !== 'REQUEST_REDO') {
       return res
@@ -1222,14 +1172,10 @@ export async function editContract(req, res) {
 export async function deleteContract(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const contract = await requireOwnedTeachingContract(req, res, id);
+    if (!contract) return;
     if (contract.status === 'COMPLETED') {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: 'Completed contracts cannot be deleted' });
-    }
-    if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
-      const ok = await isContractInManagerDept(contract.id, req);
-      if (!ok) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
     }
 
     // Clean up files if any
@@ -1275,16 +1221,8 @@ export async function uploadSignature(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
     const who = (req.body.who || 'lecturer').toLowerCase();
-    const contract = await TeachingContract.findByPk(id);
-    if (!contract) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-    // Lecturers may only sign their own contract
-    if (String(req.user?.role).toLowerCase() === 'lecturer' && contract.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied: you do not own this contract' });
-    }
-    if (['admin', 'management'].includes(String(req.user?.role).toLowerCase())) {
-      const allowed = await isContractInManagerDept(contract.id, req);
-      if (!allowed) return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
+    const contract = await requireOwnedTeachingContract(req, res, id);
+    if (!contract) return;
     if (!req.file) return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: 'No file uploaded' });
 
     // Move file into person-specific folder: lecturer's name if who=lecturer, else management user's name

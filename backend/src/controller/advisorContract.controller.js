@@ -166,6 +166,21 @@ function toDateOnly(v) {
   }
 }
 
+async function requireOwnedAdvisorContract(req, res, contractId, options = {}) {
+  const contract = await AdvisorContract.findByPk(contractId, options);
+  if (!contract) {
+    res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    return null;
+  }
+
+  if (Number(contract.lecturer_user_id) !== Number(req.user?.id)) {
+    res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
+    return null;
+  }
+
+  return contract;
+}
+
 // Signature upload (multipart). Mirrors teaching contract signature handling.
 const advisorSignatureStorage = multer.diskStorage({
   destination: function (req, file, cb) {
@@ -193,28 +208,9 @@ export async function uploadAdvisorContractSignature(req, res) {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: "Invalid 'who' (must be advisor|management)" });
     }
 
-    const found = await AdvisorContract.findByPk(id, {
-      include: [
-        {
-          model: User,
-          as: 'lecturer',
-          attributes: ['id', 'department_name', 'display_name', 'email'],
-          required: false,
-        },
-      ],
-    });
-    if (!found) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
+    const found = await requireOwnedAdvisorContract(req, res, id);
+    if (!found) return;
     if (!req.file) return res.status(HTTP_STATUS.BAD_REQUEST).json({ message: 'No file uploaded' });
-
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if ((actorRole === 'lecturer' || actorRole === 'advisor') && found.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      if (String(found.lecturer?.department_name || '') !== String(req.user?.department_name || '')) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-      }
-    }
 
     // Move file into person-specific folder
     let ownerName = 'unknown';
@@ -358,17 +354,7 @@ export async function listAdvisorContracts(req, res) {
     const statusQuery = req.query.status;
 
     const where = {};
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if (actorRole === 'lecturer' || actorRole === 'advisor') {
-      where.lecturer_user_id = req.user.id;
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      // Scope to department
-      const dept = req.user?.department_name || null;
-      if (!dept) return res.json({ data: [], page, limit, total: 0 });
-      // Filter via joined lecturer
-      // Keep where empty and apply include-required filter
-    }
+    where.lecturer_user_id = req.user.id;
 
     const include = [
       {
@@ -385,11 +371,6 @@ export async function listAdvisorContracts(req, res) {
         required: false,
       },
     ];
-
-    if (['admin', 'management'].includes(actorRole)) {
-      include[0].required = true;
-      include[0].where = { department_name: req.user.department_name };
-    }
 
     // Optional status filter (normalized). If a teaching-contract status is provided,
     // return empty instead of error to keep shared UIs simple.
@@ -453,6 +434,11 @@ export async function listAdvisorContracts(req, res) {
 export async function getAdvisorContract(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const ownedContract = await requireOwnedAdvisorContract(req, res, id, {
+      attributes: ['id', 'lecturer_user_id'],
+    });
+    if (!ownedContract) return;
+
     const found = await AdvisorContract.findByPk(id, {
       include: [
         {
@@ -471,16 +457,6 @@ export async function getAdvisorContract(req, res) {
     });
     if (!found) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
 
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if ((actorRole === 'lecturer' || actorRole === 'advisor') && found.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      if (String(found.lecturer?.department_name || '') !== String(req.user?.department_name || '')) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-      }
-    }
-
     return res.json(found);
   } catch (e) {
     console.error('[getAdvisorContract]', e);
@@ -496,27 +472,8 @@ export async function updateAdvisorStatus(req, res) {
     const body = req.validated?.body || req.body || {};
     const status = String(body.status || '').trim().toUpperCase().replace(/\s+/g, '_');
 
-    const found = await AdvisorContract.findByPk(id, {
-      include: [
-        {
-          model: User,
-          as: 'lecturer',
-          attributes: ['id', 'department_name'],
-          required: false,
-        },
-      ],
-    });
-    if (!found) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if ((actorRole === 'lecturer' || actorRole === 'advisor') && found.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      if (String(found.lecturer?.department_name || '') !== String(req.user?.department_name || '')) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-      }
-    }
+    const found = await requireOwnedAdvisorContract(req, res, id);
+    if (!found) return;
 
     await found.update({ status });
     return res.json({ message: 'Updated', id, status });
@@ -536,33 +493,13 @@ export async function editAdvisorContract(req, res) {
     const id = parseInt(req.params.id, 10);
     const body = req.validated?.body || req.body || {};
 
-    const found = await AdvisorContract.findByPk(id, {
-      include: [
-        {
-          model: User,
-          as: 'lecturer',
-          attributes: ['id', 'department_name'],
-          required: false,
-        },
-      ],
+    const found = await requireOwnedAdvisorContract(req, res, id, {
       transaction: tx,
       lock: tx.LOCK.UPDATE,
     });
     if (!found) {
       await tx.rollback();
-      return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-    }
-
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if (actorRole !== 'admin') {
-      await tx.rollback();
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      if (String(found.lecturer?.department_name || '') !== String(req.user?.department_name || '')) {
-        await tx.rollback();
-        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-      }
+      return;
     }
 
     if (String(found.status || '').toUpperCase() !== 'REQUEST_REDO') {
@@ -612,6 +549,11 @@ export async function editAdvisorContract(req, res) {
 export async function generateAdvisorPdf(req, res) {
   try {
     const id = parseInt(req.params.id, 10);
+    const ownedContract = await requireOwnedAdvisorContract(req, res, id, {
+      attributes: ['id', 'lecturer_user_id'],
+    });
+    if (!ownedContract) return;
+
     const found = await AdvisorContract.findByPk(id, {
       include: [
         {
@@ -630,16 +572,6 @@ export async function generateAdvisorPdf(req, res) {
       ],
     });
     if (!found) return res.status(HTTP_STATUS.NOT_FOUND).json({ message: 'Not found' });
-
-    const actorRole = String(req.user?.role || '').toLowerCase();
-    if ((actorRole === 'lecturer' || actorRole === 'advisor') && found.lecturer_user_id !== req.user.id) {
-      return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-    }
-    if (['admin', 'management'].includes(actorRole)) {
-      if (String(found.lecturer?.department_name || '') !== String(req.user?.department_name || '')) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json({ message: 'Access denied' });
-      }
-    }
 
     let html = loadTemplate('Advisor_Contract.html');
     html = embedLogo(html);
