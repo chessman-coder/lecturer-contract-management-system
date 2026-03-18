@@ -6,6 +6,12 @@ import { Toaster } from "react-hot-toast";
 import { useAuthStore } from "./store/useAuthStore.js";
 import RequireRole from "./components/RequireRole.jsx";
 // Route-level code splitting: lazy-load all pages/layouts
+
+// add my piseykhen
+const AdvisorDashboard = lazy(() => import("./pages/advisor/AdvisorDashboard.jsx"));
+const ForgotPasswordPage = lazy(() => import("./pages/ForgotPasswordPage.jsx"));
+const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage.jsx"));
+
 const AdminDashboardLayout = lazy(() => import("./pages/Admindashboard.jsx"));
 const AdminHome = lazy(() => import("./pages/admin/AdminHome.jsx"));
 const Recruitment = lazy(() => import("./pages/admin/RecruitmentDynamic.jsx"));
@@ -95,9 +101,11 @@ function App() {
           {/* Public login */}
           <Route path="/login" element={<LoginForm />} />
 
+
           {/* Public forgot / reset password */}
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+
 
           {/* Superadmin */}
           <Route
@@ -159,7 +167,9 @@ function App() {
             <Route index element={<LecturerDashboard />} />
             <Route path="profile" element={<LecturerProfile />} />
             <Route path="my-contracts" element={<LecturerContracts />} />
+
             <Route path="schedule" element={<LecturerSchedule />} />
+
           </Route>
 
           {/* Advisor + Nested routes (same panel UX as lecturer, but different profile settings design) */}
