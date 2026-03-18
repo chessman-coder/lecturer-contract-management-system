@@ -181,10 +181,8 @@ function App() {
               </RequireRole>
             }
           >
-
             <Route index element={<AdvisorDashboard />} />
-
-
+            <Route index element={<LecturerDashboard />} />
             <Route path="profile" element={<AdvisorProfile />} />
             <Route path="my-contracts" element={<LecturerContracts />} />
           </Route>
