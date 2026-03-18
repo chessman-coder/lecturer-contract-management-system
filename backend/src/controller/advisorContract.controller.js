@@ -289,7 +289,20 @@ export async function uploadAdvisorContractSignature(req, res) {
       });
       try {
         const notificationSocket = getNotificationSocket();
-        await notificationSocket.notifyRole({ role: 'management', type: 'status_change', message: `Advisor contract #${found.id} signed by advisor, awaiting your signature`, contractId: found.id });
+        const managementNotification = {
+          role: 'management',
+          type: 'status_change',
+          message: `Advisor contract #${found.id} signed by advisor, awaiting your signature`,
+          contractId: found.id,
+        };
+        if (found && typeof found === 'object') {
+          if (found.department_name) {
+            managementNotification.department_name = found.department_name;
+          } else if (found.lecturer_department_name) {
+            managementNotification.department_name = found.lecturer_department_name;
+          }
+        }
+        await notificationSocket.notifyRole(managementNotification);
         await notificationSocket.notifyRole({ role: 'admin', type: 'status_change', message: `Advisor contract #${found.id} signed by advisor`, contractId: found.id });
       } catch (notifErr) {
         console.error('[uploadAdvisorContractSignature] notification failed:', notifErr.message);
@@ -329,6 +342,7 @@ export async function createAdvisorContract(req, res) {
     const body = req.validated?.body || req.body || {};
 
     const actorRole = String(req.user?.role || '').toLowerCase();
+    let managementDept = null;
     if (['admin', 'management'].includes(actorRole)) {
       const actorDept = req.user?.department_name || null;
       if (!actorDept) {
@@ -349,6 +363,7 @@ export async function createAdvisorContract(req, res) {
           .status(HTTP_STATUS.FORBIDDEN)
           .json({ message: 'You can only create advisor contracts for lecturers in your department' });
       }
+      managementDept = lecturer.department_name || actorDept;
     }
 
     // Admin UX: selecting a lecturer in Advisor contract generation implies granting advisor role.
@@ -379,6 +394,21 @@ export async function createAdvisorContract(req, res) {
     await tx.commit();
 
     const notificationSocket = getNotificationSocket();
+
+    // Ensure we have the lecturer's department for department-scoped management notifications
+    if (!managementDept) {
+      try {
+        const lecturerForDept = await User.findByPk(body.lecturer_user_id, {
+          attributes: ['department_name'],
+        });
+        if (lecturerForDept) {
+          managementDept = lecturerForDept.department_name || null;
+        }
+      } catch (deptErr) {
+        console.error('[createAdvisorContract] Failed to load lecturer department for notifications:', deptErr.message);
+      }
+    }
+
     try {
       await notificationSocket.notifyLecturer({
         user_id: parseInt(body.lecturer_user_id, 10),
@@ -390,12 +420,23 @@ export async function createAdvisorContract(req, res) {
       console.error('[createAdvisorContract] notifyLecturer failed:', notifErr.message);
     }
     try {
-      await notificationSocket.notifyRole({ role: 'management', type: 'status_change', message: `Advisor contract #${created.id} created, awaiting advisor signature`, contractId: created.id });
+      await notificationSocket.notifyRole({
+        role: 'management',
+        department_name: managementDept || undefined,
+        type: 'status_change',
+        message: `Advisor contract #${created.id} created, awaiting advisor signature`,
+        contractId: created.id,
+      });
     } catch (notifErr) {
       console.error('[createAdvisorContract] notifyRole(management) failed:', notifErr.message);
     }
     try {
-      await notificationSocket.notifyRole({ role: 'admin', type: 'status_change', message: `Advisor contract #${created.id} created, awaiting advisor signature`, contractId: created.id });
+      await notificationSocket.notifyRole({
+        role: 'admin',
+        type: 'status_change',
+        message: `Advisor contract #${created.id} created, awaiting advisor signature`,
+        contractId: created.id,
+      });
     } catch (notifErr) {
       console.error('[createAdvisorContract] notifyRole(admin) failed:', notifErr.message);
     }
@@ -651,6 +692,7 @@ export async function updateAdvisorStatus(req, res) {
           type: 'status_change',
           message: `Advisor contract #${found.id} status updated to ${status.replace(/_/g, ' ').toLowerCase()}`,
           contractId: found.id,
+          department_name: found.lecturer.department_name,
         });
       } catch (notifErr) {
         console.error('[updateAdvisorStatus] notifyRole(management) failed:', notifErr.message);

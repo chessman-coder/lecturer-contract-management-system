@@ -22,7 +22,7 @@ export function useNotifications() {
       setNotifications(initial);
       const seen = (() => { try { return Number(localStorage.getItem('adminNotifLastSeenTs')) || 0; } catch { return 0; } })();
       const unread = initial.filter((n) => (n.ts || 0) > seen).length;
-      if (unread > 0) setUnreadCount(unread);
+      setUnreadCount(unread);
     }).catch(() => {});
   }, [authUser?.id]);
 

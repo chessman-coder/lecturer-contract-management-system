@@ -118,7 +118,10 @@ class NotificationSocketService {
             console.log(`[notifyRole] role=${role} dept=${department_name || 'any'} found ${users.length} user(s)`);
 
             if (!users.length) {
-                this.broadcastToRole({ role, type, message, contractId, data });
+                // When department_name is provided, avoid broadcasting to the whole role room
+                if (!department_name) {
+                    this.broadcastToRole({ role, type, message, contractId, data });
+                }
                 return [];
             }
 
@@ -142,7 +145,10 @@ class NotificationSocketService {
             return created;
         } catch (error) {
             console.error(`[notifyRole] error for role=${role}:`, error.message);
-            this.broadcastToRole({ role, type, message, contractId, data });
+            // When department_name is provided, avoid broadcasting to the whole role room
+            if (!department_name) {
+                this.broadcastToRole({ role, type, message, contractId, data });
+            }
             return [];
         }
     }
