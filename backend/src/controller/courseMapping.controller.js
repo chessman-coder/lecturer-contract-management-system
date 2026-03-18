@@ -9,9 +9,44 @@ import Group from '../model/group.model.js';
 import Schedule from '../model/schedule.model.js';
 import ScheduleEntry from '../model/scheduleEntry.model.js';
 import { TimeSlot } from '../model/timeSlot.model.js';
-import { availabilityToScheduleEntries } from '../utils/availabilityParser.js';
+import {
+  availabilityToScheduleEntries,
+  buildAvailabilityStringFromSessions,
+  normalizeDay,
+  normalizeSession,
+  SESSION_TO_RANGE,
+} from '../utils/availabilityParser.js';
 import ExcelJS from 'exceljs';
 import sequelize from '../config/db.js';
+
+function parseGroupNumberFromName(name, fallback) {
+  const n = parseInt(String(name || '').match(/(\d+)/)?.[1] || '', 10);
+  if (Number.isInteger(n) && n > 0) return n;
+  const fb = parseInt(String(fallback || ''), 10);
+  return Number.isInteger(fb) && fb > 0 ? fb : 1;
+}
+
+function normalizeAssignmentsByGroup(raw) {
+  const out = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [gid, val] of Object.entries(raw)) {
+    const groupId = parseInt(String(gid), 10);
+    if (!Number.isInteger(groupId) || groupId <= 0) continue;
+
+    const th = Array.isArray(val?.THEORY) ? val.THEORY : Array.isArray(val?.theory) ? val.theory : [];
+    const lb = Array.isArray(val?.LAB) ? val.LAB : Array.isArray(val?.lab) ? val.lab : [];
+
+    out[String(groupId)] = {
+      THEORY: (Array.isArray(th) ? th : [])
+        .map((x) => ({ day: x?.day, session: x?.session || x?.sessionId }))
+        .filter((x) => normalizeDay(x.day) && normalizeSession(x.session)),
+      LAB: (Array.isArray(lb) ? lb : [])
+        .map((x) => ({ day: x?.day, session: x?.session || x?.sessionId }))
+        .filter((x) => normalizeDay(x.day) && normalizeSession(x.session)),
+    };
+  }
+  return out;
+}
 
 // Helper to resolve department id based on admin's department
 async function resolveDeptId(req) {
@@ -286,6 +321,7 @@ export const listCourseMappings = async (req, res) => {
         lab_hours: r.lab_hours || (isLabLegacy ? '30h' : null),
         lab_groups,
         availability: r.availability,
+        availability_assignments: r.availability_assignments,
         status: r.status,
         contacted_by: r.contacted_by,
         room_number: r.room_number,
@@ -348,6 +384,36 @@ export const listCourseMappings = async (req, res) => {
   }
 };
 
+// GET /api/course-mappings/academic-years
+// Returns distinct academic_year values from accepted course mappings.
+export const listCourseMappingAcademicYears = async (req, res) => {
+  try {
+    const deptId = await resolveDeptId(req);
+    const where = {
+      academic_year: { [Op.ne]: null },
+      status: 'Accepted',
+    };
+    if (deptId) where.dept_id = deptId;
+
+    const rows = await CourseMapping.findAll({
+      attributes: ['academic_year'],
+      where,
+      group: ['academic_year'],
+      order: [['academic_year', 'DESC']],
+      raw: true,
+    });
+
+    const years = rows
+      .map((r) => String(r?.academic_year || '').trim())
+      .filter(Boolean);
+
+    return res.json({ data: years });
+  } catch (e) {
+    console.error('[listCourseMappingAcademicYears]', e);
+    return res.status(500).json({ message: 'Failed to list academic years', error: e.message });
+  }
+};
+
 export const createCourseMapping = async (req, res) => {
   try {
     const {
@@ -378,6 +444,7 @@ export const createCourseMapping = async (req, res) => {
       lab_hours,
       lab_groups,
       theory_15h_combined,
+      availability_assignments_by_group,
     } = req.body;
     console.log('[createCourseMapping] incoming', req.body);
     if (!class_id || !course_id || !academic_year || !term) {
@@ -406,6 +473,9 @@ export const createCourseMapping = async (req, res) => {
     const labGroupIds = parseIdArray(lab_group_ids);
     const hasTypedGroups = theoryGroupIds.length > 0 || labGroupIds.length > 0;
 
+    // Structured per-group session assignments (preferred over legacy availability string)
+    const assignmentsByGroup = normalizeAssignmentsByGroup(availability_assignments_by_group);
+
     // Legacy fallback: single group_id or group_ids union
     const groupIdsRaw = Array.isArray(group_ids)
       ? group_ids
@@ -425,14 +495,16 @@ export const createCourseMapping = async (req, res) => {
       ? Array.from(new Set([...theoryGroupIds, ...labGroupIds]))
       : groupIdsLegacy;
 
+    let groupsById = new Map();
     if (unionGroupIds.length) {
       const groups = await Group.findAll({
         where: { id: unionGroupIds, class_id },
-        attributes: ['id', 'class_id'],
+        attributes: ['id', 'class_id', 'name'],
       });
       if (groups.length !== unionGroupIds.length) {
         return res.status(400).json({ message: 'Invalid group ids for the selected class' });
       }
+      groupsById = new Map(groups.map((g) => [String(g.id), g]));
     }
     // Validate dual fields (new) with backward compatibility
     let thGroupsIn = parseInt(theory_groups, 10);
@@ -528,14 +600,15 @@ export const createCourseMapping = async (req, res) => {
     let legacyType = 'Theory (15h)';
     let legacyGroups = 1;
     if (thGroupsIn > 0 && lbGroupsIn === 0) {
-      legacyType = thHoursIn === '30h' ? 'Lab (30h)' : 'Theory (15h)'; // if theory 30h we still cannot represent; keep Theory (15h) vs Lab (30h) best-effort
+      // Keep legacy label as Theory to avoid downstream code treating this as Lab.
+      legacyType = 'Theory (15h)';
       legacyGroups = thGroupsIn;
     } else if (lbGroupsIn > 0 && thGroupsIn === 0) {
       legacyType = 'Lab (30h)';
       legacyGroups = lbGroupsIn;
     } else if (lbGroupsIn > 0 && thGroupsIn > 0) {
-      // both selected: pick theory-based label, groups from theory for legacy field
-      legacyType = thHoursIn === '30h' ? 'Lab (30h)' : 'Theory (15h)';
+      // both selected: keep legacy as Theory label; rely on new fields for true meaning
+      legacyType = 'Theory (15h)';
       legacyGroups = thGroupsIn;
     }
 
@@ -547,6 +620,7 @@ export const createCourseMapping = async (req, res) => {
       term,
       year_level: year_level || null,
       availability: availability || null,
+      availability_assignments: [],
       status: status || 'Pending',
       contacted_by: contactedBySan,
       room_number: roomNumberSan,
@@ -555,6 +629,88 @@ export const createCourseMapping = async (req, res) => {
       comment: commentSan,
       dept_id: deptId,
     };
+
+    // Validate structured assignments if provided for group-specific mapping creation
+    if (unionGroupIds.length && Object.keys(assignmentsByGroup || {}).length > 0) {
+      const errors = [];
+      const usedSlots = new Map();
+      const theorySel = new Set(theoryGroupIds.map(String));
+      const labSel = new Set(labGroupIds.map(String));
+
+      const theoryMin = 1;
+      const theoryMax = thHoursIn === '30h' ? 2 : 1;
+      const allowTheoryOverlap = thHoursIn === '15h';
+
+      for (const gidNum of unionGroupIds) {
+        const gid = String(gidNum);
+        const inTheory = hasTypedGroups ? theorySel.has(gid) : true;
+        const inLab = hasTypedGroups ? labSel.has(gid) : true;
+
+        const th = assignmentsByGroup?.[gid]?.THEORY || [];
+        const lb = assignmentsByGroup?.[gid]?.LAB || [];
+
+        const gName = groupsById.get(gid)?.name || `Group ${gid}`;
+
+        if (inTheory && (th.length < theoryMin || th.length > theoryMax)) {
+          const range = theoryMin === theoryMax ? `exactly ${theoryMin}` : `${theoryMin}–${theoryMax}`;
+          errors.push(`${gName}: Theory requires ${range} session${theoryMax !== 1 ? 's' : ''}`);
+        }
+        if (!inTheory && th.length) errors.push(`${gName}: Theory sessions provided but group is not selected for Theory`);
+        if (inLab && lb.length !== 2) errors.push(`${gName}: Lab requires exactly 2 sessions`);
+        if (!inLab && lb.length) errors.push(`${gName}: Lab sessions provided but group is not selected for Lab`);
+
+        const consume = (arr, groupType) => {
+          const seenLocal = new Set();
+          for (const s of arr) {
+            const day = normalizeDay(s?.day);
+            const session = normalizeSession(s?.session || s?.sessionId);
+            if (!day || !session) {
+              errors.push(`${gName}: invalid ${groupType} session`);
+              continue;
+            }
+            const key = `${day}|${session}`;
+            if (seenLocal.has(key)) {
+              errors.push(`${gName}: duplicate slot ${day} ${session} in ${groupType}`);
+              continue;
+            }
+            seenLocal.add(key);
+
+            if (groupType === 'THEORY' && allowTheoryOverlap) {
+              // Theory 15h: allow overlap across theory groups, but never with Lab
+              if (usedSlots.has(key)) {
+                const prev = usedSlots.get(key);
+                if (prev.groupType !== 'THEORY') {
+                  errors.push(
+                    `Slot ${day} ${session} is assigned to more than one group (Lab and Theory)`
+                  );
+                }
+              } else {
+                usedSlots.set(key, { groupType, groupName: gName });
+              }
+            } else {
+              // Default: no overlap
+              if (usedSlots.has(key)) {
+                const prev = usedSlots.get(key);
+                errors.push(
+                  `Slot ${day} ${session} is assigned to multiple groups (${prev.groupType} group ${prev.groupName} and ${groupType} group ${gName})`
+                );
+              } else {
+                usedSlots.set(key, { groupType, groupName: gName });
+              }
+            }
+          }
+        };
+
+        if (inTheory) {
+          consume(th, 'THEORY');
+        }
+        if (inLab) consume(lb, 'LAB');
+      }
+
+      if (errors.length) {
+        return res.status(400).json({ message: 'Validation error', errors });
+      }
+    }
 
     // If no group selection, create a single aggregate mapping (legacy behavior)
     if (!unionGroupIds.length) {
@@ -586,16 +742,53 @@ export const createCourseMapping = async (req, res) => {
         const inTheory = hasTypedGroups ? theorySet.has(key) : true;
         const inLab = hasTypedGroups ? labSet.has(key) : true;
 
+        const thSessions = inTheory ? assignmentsByGroup?.[key]?.THEORY || [] : [];
+        const lbSessions = inLab ? assignmentsByGroup?.[key]?.LAB || [] : [];
+        const rowSessions = [...thSessions, ...lbSessions];
+        const derivedAvailability = rowSessions.length
+          ? buildAvailabilityStringFromSessions(rowSessions)
+          : commonPayload.availability;
+
+        const groupName = groupsById.get(key)?.name || '';
+        const groupNumber = parseGroupNumberFromName(groupName, key);
+
+        const toAssigned = (arr) =>
+          (Array.isArray(arr) ? arr : []).map((s) => {
+            const day = normalizeDay(s?.day);
+            const session = normalizeSession(s?.session || s?.sessionId);
+            const r = SESSION_TO_RANGE[session];
+            return {
+              day,
+              session,
+              startTime: r?.startTime,
+              endTime: r?.endTime,
+            };
+          });
+
+        const rowAssignments = [];
+        if (inTheory) {
+          rowAssignments.push({
+            groupType: 'THEORY',
+            groupNumber,
+            groupId: parseInt(key, 10),
+            assignedSessions: toAssigned(thSessions),
+          });
+        }
+        if (inLab) {
+          rowAssignments.push({
+            groupType: 'LAB',
+            groupNumber,
+            groupId: parseInt(key, 10),
+            assignedSessions: toAssigned(lbSessions),
+          });
+        }
+
         const rowTheoryGroups = inTheory ? 1 : 0;
         const rowLabGroups = inLab ? 1 : 0;
         const rowTheoryHours = inTheory ? thHoursIn || '15h' : null;
         const rowLabHours = inLab ? '30h' : null;
 
-        const rowTypeHours = inTheory
-          ? rowTheoryHours === '30h'
-            ? 'Lab (30h)'
-            : 'Theory (15h)'
-          : 'Lab (30h)';
+        const rowTypeHours = inTheory ? 'Theory (15h)' : 'Lab (30h)';
 
         const rowTheoryRoom = inTheory
           ? theoryRoomByGroupSan[key] ||
@@ -613,6 +806,8 @@ export const createCourseMapping = async (req, res) => {
 
         return CourseMapping.create({
           ...commonPayload,
+          availability: derivedAvailability,
+          availability_assignments: rowAssignments,
           room_number: rowRoom,
           theory_room_number: rowTheoryRoom,
           lab_room_number: rowLabRoom,
@@ -681,6 +876,8 @@ export const updateCourseMapping = async (req, res) => {
       'group_count',
       'type_hours',
       'availability',
+      'availability_assignments',
+      'availability_assignments_by_group',
       'status',
       'contacted_by',
       'room_number',
@@ -697,6 +894,153 @@ export const updateCourseMapping = async (req, res) => {
     ];
     const patch = {};
     for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
+
+    // availability_assignments_by_group is not a DB column; never pass it into m.update().
+    // Also treat presence (even an empty object) as an explicit structured availability operation.
+    const structuredModeRequested = Object.prototype.hasOwnProperty.call(
+      req.body,
+      'availability_assignments_by_group'
+    );
+    const assignmentsByGroupPatch = structuredModeRequested
+      ? normalizeAssignmentsByGroup(req.body.availability_assignments_by_group)
+      : {};
+    const structuredClearAll = structuredModeRequested && Object.keys(assignmentsByGroupPatch || {}).length === 0;
+    delete patch.availability_assignments_by_group;
+
+    const structuredPerGroupId = new Map();
+    if (structuredModeRequested) {
+      const errors = [];
+      const usedSlots = new Map();
+
+      // If client explicitly sends {}, treat as request to clear all structured assignments.
+      if (!structuredClearAll) {
+        for (const m of mappings) {
+          const gid = m?.group_id ? String(m.group_id) : null;
+          if (!gid) {
+            errors.push('Structured availability requires group-specific mappings (group_id is missing).');
+            continue;
+          }
+          const inTheory = (parseInt(String(m?.theory_groups ?? 0), 10) || 0) > 0;
+          const inLab = (parseInt(String(m?.lab_groups ?? 0), 10) || 0) > 0;
+
+          const rowTheoryHours =
+            String(m?.theory_hours || '').trim().toLowerCase() === '30h' ? '30h' : '15h';
+          const rowTheoryMin = inTheory ? 1 : 0;
+          const rowTheoryMax = inTheory ? (rowTheoryHours === '30h' ? 2 : 1) : 0;
+
+          const th = assignmentsByGroupPatch?.[gid]?.THEORY || [];
+          const lb = assignmentsByGroupPatch?.[gid]?.LAB || [];
+
+          if (inTheory && (th.length < rowTheoryMin || th.length > rowTheoryMax)) {
+            const range =
+              rowTheoryMin === rowTheoryMax ? `exactly ${rowTheoryMin}` : `${rowTheoryMin}–${rowTheoryMax}`;
+            errors.push(
+              `Group ${gid}: Theory requires ${range} session${rowTheoryMax !== 1 ? 's' : ''}`
+            );
+          }
+          if (!inTheory && th.length) errors.push(`Group ${gid}: Theory sessions provided but mapping has no Theory`);
+          if (inLab && lb.length !== 2) errors.push(`Group ${gid}: Lab requires exactly 2 sessions`);
+          if (!inLab && lb.length) errors.push(`Group ${gid}: Lab sessions provided but mapping has no Lab`);
+
+          const consume = (arr, groupType) => {
+            const seenLocal = new Set();
+            for (const s of arr) {
+              const day = normalizeDay(s?.day);
+              const session = normalizeSession(s?.session || s?.sessionId);
+              if (!day || !session) {
+                errors.push(`Group ${gid}: invalid ${groupType} session`);
+                continue;
+              }
+              const key = `${day}|${session}`;
+              if (seenLocal.has(key)) {
+                errors.push(`Group ${gid}: duplicate slot ${day} ${session} in ${groupType}`);
+                continue;
+              }
+              seenLocal.add(key);
+
+              const prev = usedSlots.get(key);
+              if (!prev) {
+                usedSlots.set(key, {
+                  groupType,
+                  groupId: gid,
+                  theoryHours: groupType === 'THEORY' ? rowTheoryHours : null,
+                });
+                continue;
+              }
+
+              // Lab can never overlap with anything
+              if (groupType === 'LAB' || prev.groupType === 'LAB') {
+                errors.push(
+                  `Slot ${day} ${session} is assigned to multiple groups (${prev.groupType} group ${prev.groupId} and ${groupType} group ${gid})`
+                );
+                continue;
+              }
+
+              // Theory vs Theory: allow overlap only when both are 15h
+              const prevHours = String(prev.theoryHours || '').toLowerCase() === '30h' ? '30h' : '15h';
+              if (!(prevHours === '15h' && rowTheoryHours === '15h')) {
+                errors.push(
+                  `Slot ${day} ${session} is assigned to multiple groups (${prev.groupType} group ${prev.groupId} and ${groupType} group ${gid})`
+                );
+              }
+            }
+          };
+
+          if (inTheory) {
+            consume(th, 'THEORY');
+          }
+          if (inLab) consume(lb, 'LAB');
+
+          const groupNumber = parseGroupNumberFromName(null, gid);
+          const toAssigned = (arr) =>
+            (Array.isArray(arr) ? arr : []).map((s) => {
+              const day = normalizeDay(s?.day);
+              const session = normalizeSession(s?.session || s?.sessionId);
+              const r = SESSION_TO_RANGE[session];
+              return {
+                day,
+                session,
+                startTime: r?.startTime,
+                endTime: r?.endTime,
+              };
+            });
+
+          const rowAssignments = [];
+          if (inTheory) {
+            rowAssignments.push({
+              groupType: 'THEORY',
+              groupNumber,
+              groupId: parseInt(gid, 10),
+              assignedSessions: toAssigned(th),
+            });
+          }
+          if (inLab) {
+            rowAssignments.push({
+              groupType: 'LAB',
+              groupNumber,
+              groupId: parseInt(gid, 10),
+              assignedSessions: toAssigned(lb),
+            });
+          }
+          const derivedAvailability = buildAvailabilityStringFromSessions([
+            ...(inTheory ? th : []),
+            ...(inLab ? lb : []),
+          ]);
+          structuredPerGroupId.set(gid, {
+            availability: derivedAvailability,
+            availability_assignments: rowAssignments,
+          });
+        }
+
+        if (errors.length) {
+          return res.status(400).json({ message: 'Validation error', errors });
+        }
+      }
+
+      // Prevent applying these globally; they are applied per-row below.
+      delete patch.availability_assignments;
+      delete patch.availability;
+    }
     if ('group_count' in patch) {
       let groups = parseInt(patch.group_count, 10);
       if (!Number.isFinite(groups) || groups < 1) groups = 1;
@@ -835,6 +1179,18 @@ export const updateCourseMapping = async (req, res) => {
         mappings.map((m) => {
           const perPatch = { ...patch };
           const gid = m.group_id ? String(m.group_id) : null;
+
+          if (structuredModeRequested) {
+            if (structuredClearAll) {
+              perPatch.availability = null;
+              perPatch.availability_assignments = [];
+            } else if (gid && structuredPerGroupId.has(gid)) {
+              const st = structuredPerGroupId.get(gid);
+              perPatch.availability = st.availability;
+              perPatch.availability_assignments = st.availability_assignments;
+            }
+          }
+
           if (gid && theoryRoomByGroupPatch && gid in theoryRoomByGroupPatch) {
             perPatch.theory_room_number = theoryRoomByGroupPatch[gid];
           }
@@ -862,6 +1218,23 @@ export const updateCourseMapping = async (req, res) => {
       return res.json({ message: 'Updated', updated: mappings.length });
     }
 
+    await Promise.all(
+      mappings.map((m) => {
+        const perPatch = { ...patch };
+        const gid = m.group_id ? String(m.group_id) : null;
+        if (structuredModeRequested) {
+          if (structuredClearAll) {
+            perPatch.availability = null;
+            perPatch.availability_assignments = [];
+          } else if (gid && structuredPerGroupId.has(gid)) {
+            const st = structuredPerGroupId.get(gid);
+            perPatch.availability = st.availability;
+            perPatch.availability_assignments = st.availability_assignments;
+          }
+        }
+        return m.update(perPatch);
+      })
+    );
     await Promise.all(mappings.map((m) => m.update(patch)));
     try {
       await Promise.all(mappings.map((m) => syncScheduleForCourseMapping(m.id)));
