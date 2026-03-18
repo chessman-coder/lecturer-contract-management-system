@@ -52,11 +52,19 @@ export const useLecturerSchedule = (scheduleId) => {
   const [error, setError] = useState('');
 
   const fetchSchedule = useCallback(async () => {
+    // If no scheduleId is provided, avoid an unscoped fetch and reset to defaults.
+    if (!scheduleId) {
+      setEntries([]);
+      setSpecialSlots(DEFAULT_SPECIAL_SLOTS);
+      setError('');
+      return;
+    }
+
     try {
       setLoading(true);
       setError('');
 
-      const params = scheduleId ? { schedule_id: scheduleId } : {};
+      const params = { schedule_id: scheduleId };
       const response = await getScheduleEntries(params);
       setEntries(Array.isArray(response?.data?.schedule) ? response.data.schedule : []);
       setSpecialSlots(
