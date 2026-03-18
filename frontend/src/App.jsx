@@ -128,6 +128,8 @@ function App() {
             <Route path="profile" element={<LecturerProfile />} />
             <Route path="my-contracts" element={<LecturerContracts />} />
             <Route path="schedule" element={<LecturerSchedule />} />
+            <Route path="schedule/:scheduleId" element={<LecturerSchedule />} />
+
           </Route>
 
           {/* Advisor + Nested routes (same panel UX as lecturer, but different profile settings design) */}
