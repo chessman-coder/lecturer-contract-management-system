@@ -75,7 +75,7 @@ export default function DocumentsSection({
           url={profile.cv_file_path}
           onUpload={(f) => onUploadFiles({ cv: f })}
           uploading={fileUploading}
-          editable
+          editable={editMode}
         />
         {syllabusFiles.length ? (
           <div className="text-sm p-4 rounded-xl border border-slate-200 bg-slate-50/70">
