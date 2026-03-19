@@ -64,6 +64,12 @@ export const useLecturerSchedule = (scheduleId) => {
       setLoading(true);
       setError('');
 
+      if (!scheduleId) {
+        setEntries([]);
+        setSpecialSlots(DEFAULT_SPECIAL_SLOTS);
+        return;
+      }
+
       const params = { schedule_id: scheduleId };
       const response = await getScheduleEntries(params);
       setEntries(Array.isArray(response?.data?.schedule) ? response.data.schedule : []);
