@@ -61,9 +61,17 @@ function ScheduleListView({ onSelectSchedule }) {
       {!loading && !error && schedules.length > 0 && (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {schedules.map((schedule) => (
-            <button
+            <div
               key={schedule.id}
               onClick={() => onSelectSchedule(schedule.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelectSchedule(schedule.id);
+                }
+              }}
+              role="button"
+              tabIndex={0}
               className="text-left rounded-lg border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-blue-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             >
               <div className="space-y-3">
@@ -130,7 +138,7 @@ function ScheduleListView({ onSelectSchedule }) {
                   View Schedule
                 </button>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       )}
