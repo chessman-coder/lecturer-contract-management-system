@@ -125,10 +125,10 @@ function ScheduleListView({ onSelectSchedule }) {
                   </div>
                 )}
 
-                {/* View Button */}
-                <button className="mt-4 w-full rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                {/* View Button (visual only; card is the clickable button) */}
+                <div className="mt-4 w-full rounded-md bg-blue-500 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600">
                   View Schedule
-                </button>
+                </div>
               </div>
             </button>
           ))}
